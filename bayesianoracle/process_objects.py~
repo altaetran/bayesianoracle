@@ -1,0 +1,588 @@
+import numpy as np
+import gptools
+import scipy.stats
+# For deep copy
+import copy
+# Distribution priors
+
+from . import priors
+from . import misc
+
+class EnrichedGaussianProcess(object):
+    """ Base class for holding an extended GaussianProcess object """
+    def __init__(self, ndim,
+                 max_der_order=2,
+                 constraints=None,
+                 amplitude_prior=None,
+                 scale_priors=None,
+                 noisy=False,
+                 kernel_type='SquaredExponential',
+                 verbose=True):
+        # Check that the constraints dimensions is consistent
+        if (not (constraints is None)) and (len(constraints) != ndim):
+            raise Exception("GaussianProcess: constraints inconsistent with input dimension")
+ 
+        # Default cosntraints
+        if constraints is None:
+            constraints = [(-1e8, 1e8) for _ in range(ndim)]
+        # Default priors
+        if amplitude_prior is None:
+            #amplitude_prior = priors.UniformPrior([0, 1e2])
+            #amplitude_prior = priors.ExponentialPrior(100)
+            amplitude_prior = priors.LogNormalPrior(0,1)
+        if scale_priors is None:
+            scale_priors = [priors.LogNormalPrior(0, 1) for _ in range(ndim)]
+        
+
+        # Set dimension size, constraints, and maximum derivative order
+        self.ndim = ndim
+        self.max_der_order = max_der_order
+        self.constraints = constraints
+        self.verbose=verbose
+        self.amplitude_prior = amplitude_prior
+        self.scale_priors = scale_priors
+        self.kernel_type = kernel_type
+        self.noisy = noisy
+
+        # initialize kernel
+        self.init_kernels()
+
+        # Create initial data segment
+        self.data_init = []
+        for k in range(self.max_der_order+1):
+            self.data_init.append({'X':None, 'q':[], 'q_err':[]})
+
+        # Intialize data segment
+        self.data = copy.deepcopy(self.data_init)
+
+        # declare fit status
+        self.is_fit = False
+
+    def init_kernels(self):
+        """ Initializes the kernel functions for the Gaussian Process, and 
+        initializes the ac tual gaussian process """
+
+        if self.kernel_type == 'SquaredExponential':
+            kernel = gptools.SquaredExponentialKernel(self.ndim,
+                                                      hyperprior=[self.amplitude_prior,] + self.scale_priors)
+        elif self.kernel_type == 'Matern52':
+            kernel = gptools.Matern52Kernel(self.ndim,
+                                            hyperprior=[self.amplitude_prior,] + self.scale_priors)
+        else:
+            raise Exception("Requested Kernel not implemented")
+
+        
+        if self.noisy:
+            # If requested, set noise priors and create a diagonal noise kernel
+            noise_pX = priors.LogNormalPrior(0, 1)
+            noise_pG = priors.LogNormalPrior(0, 1)
+            noise_pH = priors.LogNormalPrior(0, 1)
+
+            # Exponential priors allow the noise to be zero, but also large if necessary
+            #noise_pX = priors.ExponentialPrior(1)
+            #noise_pG = priors.ExponentialPrior(1)
+            #noise_pH = priors.ExponentialPrior(1)
+
+            # Set up diagonal noise kernel for the value
+            noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
+                                                       n=0,
+                                                       initial_noise=1e-3,
+                                                       fixed_noise=False, 
+                                                       noise_bound=(1e-3, np.inf),
+                                                       hyperprior=[noise_pX])
+            if self.max_der_order > 0:
+                # If needed, set up gradient noise kernel
+                grad_noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
+                                                                n=1,
+                                                                initial_noise=1e-3,
+                                                                fixed_noise=False, 
+                                                                noise_bound=(1e-3, np.inf),
+                                                                hyperprior=[noise_pG])
+                noise_kernel = noise_kernel.__add__(grad_noise_kernel)
+            if self.max_der_order > 1:
+                # If needed, set up hessian noise kernel
+                hess_noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
+                                                                n=2,
+                                                                initial_noise=1e-3,
+                                                                fixed_noise=False, 
+                                                                noise_bound=(1e-3, np.inf),
+                                                                hyperprior=[noise_pH])
+                noise_kernel = noise_kernel.__add__(hess_noise_kernel)
+        else:
+            noise_kernel = None
+
+        self.gp_ = gptools.GaussianProcess(kernel, noise_k=noise_kernel)
+
+    def add_data(self, X, y, y_err=None, der_order=0):
+        """
+
+        Parameters
+        ----------
+        X     : array-like, shape = [n_samples, n_features]
+                Training vector, where n_samples is the number of samples and
+                n_features is the number of features.
+
+        y     : list of objects (func observations, gradients, hessians, etc)
+        y_err : list of errors, the element types of y_err must match that of y 
+        der_order : derivative order of the input data """
+
+        # Use default error of zero
+        if y_err is None:
+            y_err = [0] * len(y)
+
+        if X.shape[0] != len(y):
+            raise Exception('X and y have different number of points')
+
+        # Store X and y and y_err
+        if self.data[der_order]['X'] is None and self.data[der_order]['q'] == []:
+            self.data[der_order]['X'] = X
+        else:
+            self.data[der_order]['X'] = np.vstack((self.data[der_order]['X'], X))
+
+        self.data[der_order]['q'] = self.data[der_order]['q'] + y
+        self.data[der_order]['q_err'] = self.data[der_order]['q_err'] + y_err
+
+    def clear_gp_data(self):
+        """ Clears the data from the Gaussian Process, without touching the 
+        fitted parameters """
+
+        self.gp_.y = np.array([], dtype=float)
+        self.gp_.X = None
+        self.gp_.n = None
+        self.gp_.err_y = scipy.array([], dtype=float)
+        self.gp_.K_up_to_date = False
+ 
+    def clear_data(self):
+        """ Reinitializes the data segment """
+
+        self.data = copy.deepcopy(self.data_init)
+     
+    def optimize_hyperparameters(self, n_starts):
+        """ Optimize the hyperparameters. If the number number of starts is not
+        sufficient to achieve a minimum log likelihood threshold, 
+        it is increased until a max amount """
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+                
+            n_starts_mult = 2
+            n_starts_max = 50
+            ll_min = -1000*self.ndim
+            
+            # Compute the first fit
+            ll = self.gp_.optimize_hyperparameters(random_starts=n_starts)
+            if n_starts == 0:
+                n_starts = 1
+            # Iterate until minimal log likelhood or max n_starts is achieved
+            while(ll < ll_min) and n_starts < n_starts_max:
+                n_starts *= n_starts_mult
+                ll = self.gp_.optimize_hyperparameters(random_starts=n_starts)
+
+            return ll
+
+    def fit(self, n_starts):
+        """Fit the estimator with the stored data """
+        
+        # Reinitialize gaussian process
+        self.clear_gp_data()
+
+        # Loop through data and and add it to the GP
+        for m in range(self.max_der_order+1):
+            X = self.data[m]['X']
+            y = self.data[m]['q']
+            y_err = self.data[m]['q_err']
+            # Add data to GP if data is available
+            if not (X is None):
+                self.gp_.add_data_list(X, y, err_y=y_err, n=m)
+
+        # Fit gaussian process with partial data
+        if self.verbose:
+            misc.tic()
+
+        self.optimize_hyperparameters(n_starts)
+        
+        if self.verbose:
+            print("BayesianOracle>> hyperparameter optimization finished in " + str(misc.toc()) + " seconds")
+            print("BayesianOracle>> current log-likelihood: %.4f" % self.gp_.ll)
+            print("BayesianOracle>> current hyperparameters:")
+            print(self.gp_.k.params)
+            if self.noisy:
+                print("BayesianOracle>> current noise kernel hyperparameters:")
+                print(self.gp_.noise_k.params)
+                
+        # Update fit status
+        self.is_fit = True
+        return self.gp_.ll
+
+    def predict(self, X, der_order=0):
+         """ Performs a standard prediciton using the underlying Gaussian Process
+         
+         Parameters
+         ----------
+         X : numpy array, shape = (n_points, ndim)
+         where n_samples is the number of requested samples
+         
+         Output
+         ------
+         mean : numpy array, shape = (n_points,). Contains prediction means
+         std  : numpy array, shape = (n_points,). Contains prediction standard deviations """
+
+         if not self.is_fit:
+             raise Exception("Gaussian Process was not fit before calling the predict method")
+
+         # Batch process for speed. 
+         batch_sz = 100
+         n_points = X.shape[0]
+         mean, std = self.gp_.predict(X[0:np.min([n_points, batch_sz]),:], n=0, return_mean=True, return_std=True)
+         # !!! ISSUE: imaginary output of gptools.GaussianProcess.predict()
+         mean = np.real(mean)
+         std = np.real(std)
+
+         for i in range(1,int(np.ceil(float(n_points)/batch_sz))):
+             # Calculate the underlying prediction
+             batch_mean, batch_std = self.gp_.predict(X[i*batch_sz:np.min([n_points, (i+1)*batch_sz]),:], n=0, return_mean=True, return_std=True)
+             # Stack up results
+             mean = np.real(np.hstack((mean, batch_mean)))
+             std = np.real(np.hstack((std, batch_std)))
+         return mean, std 
+
+    def calculate_EI(self, X, xi=0.01, order=1):
+        """ Calculates the generalized expected improvement
+
+        Parameters
+        ----------
+        X : array-like, shape = [n_samples, n_features]
+            Grid of candidate parameters at which to compute the expected
+            improvement
+        xi: minimum expected improvement
+        order : determines which generalized expected improvement to calculate
+
+        Returns
+        -------
+        ei : array shape=(n,)
+            The expected improvement (EI) at each of the
+            candidates
+
+        References
+        ----------
+        .. [1] Jones, D R., M. Schonlau, and W. J. Welch. "Efficient global
+           optimization of expensive black-box functions." J. Global Optim.
+           13.4 (1998): 455-492.
+           
+           https://www.cs.ubc.ca/~hoos/Publ/HutEtAl09b.pdf
+        """
+
+        # Get the prediction mean, std
+        mean, std = self.predict(X)
+
+        # Calculate the z score
+        if order == 1 or order == 2:
+            u = (np.min(self.data[0]['q']) - mean - xi) / std
+            ncdf = scipy.stats.norm.cdf(u)
+            npdf = scipy.stats.norm.pdf(u)
+    
+            if order == 1:
+                # Calculate the order 1 expected improvement
+                res = np.real(std * (u * ncdf + npdf))
+            elif order == 2:
+                # Calculate the order 2 expected improvement
+                res = np.real(std)**2*((u**2+1)*ncdf + u*npdf)
+        elif order == 0:
+            # Just calculate the mean
+            res = -np.real(mean)
+        else:
+            raise NotImplementedError('expected improvement order must be 0, 1 or 2')
+            res = None
+        return res
+        
+class MultiIndependentTaskGaussianProcess(object):
+    def __init__(self, 
+                 ndim,
+                 neq,
+                 max_der_order=2,
+                 constraints=None,
+                 noisy=False,
+                 kernel_type='SquaredExponential',
+                 verbose=True):
+        if constraints is None:
+            constraints = [(0, 1) for _ in range(ndim)]
+
+        self.ndim = ndim
+        self.neq = neq
+        self.constraints = constraints
+        self.max_der_order = max_der_order
+        self.noisy=noisy
+        self.kernel_type = kernel_type
+        self.verbose = verbose
+
+        # Initialize Gaussian Processes
+        self.multi_gp = []
+        for i in range(self.neq):
+            amplitude_prior = priors.UniformPrior([0,1e2])
+            scale_priors = [priors.LogNormalPrior(0, 1) for i in range(self.ndim)]
+            self.multi_gp.append(EnrichedGaussianProcess(self.ndim, 
+                                                         max_der_order=self.max_der_order,
+                                                         constraints=self.constraints,
+                                                         amplitude_prior=amplitude_prior,
+                                                         scale_priors=scale_priors,
+                                                         kernel_type=self.kernel_type, 
+                                                         noisy=self.noisy,
+                                                         verbose=self.verbose))
+
+    def add_residual_data(self, res_idx, X, y, y_err=None, order=0):
+        """ Add data for a specific residual to the corresponding Gaussian Process 
+
+        Parameters
+        ----------
+        res_idx : index of the residual to which the input data belongs 
+        X     : array-like, shape = [n_samples, n_features]
+                Training vector, where n_samples is the number of samples and
+                n_features is the number of features.
+
+        y     : list of objects (func observations, gradients, hessians, etc)
+        y_err : list of errors, the element types of y_err must match that of y 
+        der_order : derivative order of the input data """
+
+        if not ((res_idx < self.neq) and (res_idx >= 0)):
+            raise Exception("index  add_residual_data must be an integer between 0 and " + str(neq-1))
+
+        self.multi_gp[res_idx].add_data(X, y, y_err, order)
+        
+    def clear_residual_data(self, res_idx):
+        """ Clears all residual data """
+        self.multi_gp[res_idx].clear_data()
+        
+    def fit(self, n_starts):
+        """ Optimizes the hyerparameters of each Gaussian Process. """ 
+
+        for res_idx in range(self.neq):
+            ll = self.multi_gp[res_idx].fit(n_starts)
+    
+    def predict(self, X):
+        """ Returns the sum of residual squares mean and standard deviation.
+
+        Parameters
+        ----------
+        X : numpy array, shape = (n_points, ndim)
+        where n_samples is the number of requested samples
+        
+        Output
+        ------
+        mean : numpy array, shape = (n_points,). Contains prediction means
+        std  : numpy array, shape = (n_points,). Contains prediction standard deviations """
+
+        ignore_mu_sigma_term = False
+        
+        mu = []
+        Sigma_diag = []
+        # Acquire mu and diagonal Sigma elements for the cross covariations
+        for res_idx in range(self.neq):
+            mean, std = self.multi_gp[res_idx].gp_.predict(X)
+            mu.append(mean.tolist())
+            Sigma_diag.append(std.tolist())
+        # Now, each point gets one column, rather than one row
+        mu = np.array(mu)
+        Sigma_diag = np.array(Sigma_diag)
+        # Get the sum of squares along each of the residuals
+        mu_sum_sq = np.apply_along_axis(np.linalg.norm, 0, mu)**2
+        Sigma_sum_sq = np.apply_along_axis(np.linalg.norm, 0, Sigma_diag)**2
+        # Add the terms in place to get the mean.
+        mean = mu_sum_sq
+        if not ignore_mu_sigma_term:
+            mean += Sigma_sum_sq
+
+        # Get higher order matrix multiplications for the quadratic std
+        Sigma_Sigma = np.einsum('ij,ji->i', Sigma_diag.T, Sigma_diag)
+        mu_Sigma_mu = np.einsum('ij,ji->i', mu.T, Sigma_diag*mu)
+        # Add up the results in place
+        sigma = Sigma_Sigma
+        sigma *= 2
+        mu_Sigma_mu *= 4
+        sigma += mu_Sigma_mu
+        # Get the square root
+        sigma **= 0.5
+        return mean, sigma
+
+    def discounted_mean(self, X, kappa=1):
+        """ Calculates the expected improvement in the Chi Square variable
+        past a specific threshold 
+
+        Parameters
+        ----------
+
+        X : numpy array, shape = (n_points, ndim)
+        where n_samples is the number of requested samples
+        kappa : the discount factor. 
+
+        Output
+        ------
+        discounted mean : numpy array, shape = (n_points,). Contains the discounted means
+            for the points in X """
+
+        mean, std = self.predict(X)
+        std *= kappa
+        result = mean
+        result += std
+        return result
+
+class QuadraticBMAProcess(object):
+    def __init__(self, 
+                 ndim,
+                 verbose=True):
+
+        self.ndim = ndim
+        self.verbose = verbose
+
+        # Initialize models list and weightPriors list 
+        self.quadratic_models = []
+        self.weightPriors = []
+        
+    def add_model(self, A, b, d, a):
+        """ 
+        Quadratic model of the form 0.5 x'Ax + b'x + d anchored at point a
+        Currently assumes that each model has no affect on its likelihood
+        """
+
+        # Append to the set of models
+        self.quadratic_models.append([A, b, d, a])
+        self.weightPriors.append(priors.GammaPrior(2, 2))
+
+    def estimate_model_weights(self, x):
+
+        nSamples = 1000
+        
+        # Samples of the possible lambdas. Array of nModels x nSamples
+        Lambdas = [];
+        for i in xrange(len(self.quadratic_models)):
+            # Get a nSamples samples of Lambda values for the i^th model
+            Lambdas.append(self.weightPriors[i].rvs(size=nSamples))
+
+        # Stack Lambdas to get the final lambdas
+        Lambdas = np.vstack(Lambdas)
+
+        # Determine Distancessquared
+        distancesSq = [np.square(np.linalg.norm(x-a)) 
+                       for (A, b, d, a) in self.quadratic_models] 
+        
+        distancesSq = np.transpose(np.array([distancesSq]))
+        
+        energies = np.multiply(Lambdas, distancesSq)
+
+        energies = energies - np.amin(energies, axis=0)[np.newaxis, :]
+        # Calculate the exponential terms
+        unnormWeights = np.exp(-energies)
+        # Get column sums and renormalize
+        columnSums = np.sum(unnormWeights, axis=0)
+        normWeights = np.divide(unnormWeights, columnSums[np.newaxis, :])
+
+        # Average across samples
+        modelWeights = np.sum(normWeights, axis=1)/nSamples
+
+        return modelWeights
+
+    def predict_single(self, x):
+        """
+        predicts the mean and variance for a single x
+        
+        x : n x 1 matrix containing location at which weights are desired
+        """
+        modelWeights = self.estimate_model_weights(x)
+        # Get the model predictions
+        modelMeans = [0.5*(A.dot(x)).T.dot(x) + b.T.dot(x) + d
+                      for (A, b, d, a) in self.quadratic_models] 
+        modelMeans = np.vstack(modelMeans)
+
+        # Determine the estimate as a weighted sum
+        mean = (modelWeights.dot(modelMeans))[0]
+        
+        # Get the Variance (No variance term from each model prediction)
+        var = modelWeights.dot(np.square(modelMeans)) - mean**2
+        std = np.sqrt(var)
+        return np.array([[mean, std]])
+
+    def predict(self, X):
+        """
+        predict for a stack of points X (p x n)
+        """
+
+        result = [self.predict_single(np.array([X[j,:]]).T) for j in xrange(X.shape[0])]
+        # Stack the results
+        result = np.vstack(result)
+        return result
+
+def der_to_quad(x0, f, g, H):
+    """ Converts derivative information to a quadratic form of
+    the form 0.5*x'*A*x + b'*x + d
+    x0 : n x 1 location of observation
+    f : value of the function at the observation
+    g : value of the gradient at the observation
+    H : value of the Hessian at the observation """
+    A = H
+    b = g - A.dot(x0)
+    d = f - (b.T.dot(x0) + 0.5*(A.dot(x0).T.dot(x0)))[0]
+    return([A, b, d])
+
+#bo.process_objects.der_to_quad(np.array([[1],[1]]), 10, np.array([[1],[0]]), np.array([[2, 0],[0, 10]]))
+""" Returns
+[array([[ 2,  0],
+       [ 0, 10]]),
+ array([[ -1],
+       [-10]]),
+ array([ 15.])]
+"""
+
+def centered_quad_to_quad(A, mean, f_mean):
+    A = A
+    b = -0.5*(A.dot(mean)+A.T.dot(mean))
+    d = f_mean + 0.5*(A.dot(mean)).T.dot(mean)[0]
+    return([A, b, d])
+
+class EnrichedQuadraticBMAProcess(object):
+    """ Base class for holding an extended QuadraticBMA object """
+    def __init__(self, ndim,
+                 verbose=True):
+
+        # Set dimension size, constraints, and maximum derivative order
+        self.ndim = ndim
+        self.verbose=verbose
+
+        # Create initial data segment
+        self.data_init = []
+
+        # Intialize data segment
+        self.data = copy.deepcopy(self.data_init)
+
+        # Initialize BMAProcess
+        self.bmap = QuadraticBMAProcess(ndim=ndim)
+
+    def add_observation(self, x, f, g, H):
+        """ Add an observation at x with uspecified error
+        x : location of the observation (n x 1) matrix
+        f : value of the objective at the the observed point (value, not array)
+        g : value of the gradient at the observed point (n x 1)
+        H : value of the Hessian at the observed point (n x n) """
+        
+        # Add to the self data
+        self.data.append((x, f, g, H))
+        # Find the quadratic model for this observation and add to list of models
+        [A, b, d] = der_to_quad(x, f, g, H)
+        self.bmap.add_model(A, b, d, x)
+        
+    def predict(self, X):
+        return self.bmap.predict(X)
+    
+    def calculate_discounted_mean(self, X, kappa=1):
+        """ Calculates the discounted mean = mean - kappa * std at the values 
+        in X
+        X : (p x n) matrix of p proposition points
+        kappa : std multiplier """
+        
+        # Get the predictions
+        predictions = self.bmap.predict(X)
+        means = predictions[:, 0]
+        stds = predictions[:, 1]
+
+        # Return the discounted means
+        return means - kappa*stds

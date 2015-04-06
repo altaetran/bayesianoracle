@@ -1,0 +1,4 @@
+from bayesianoracle import optimizer_objects
+
+ndim = 1
+gp = optimizer_objects.GaussianProcess(ndim)

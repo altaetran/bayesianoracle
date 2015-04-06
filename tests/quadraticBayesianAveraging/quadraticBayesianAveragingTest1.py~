@@ -1,0 +1,78 @@
+import numpy as np
+import bayesianoracle as bo
+
+def plot(bma, X, mode, k_fig):
+    """ Auxillary plotting function
+    
+    Parameters
+    ----------
+    bma : bayesianModelAveraging object to be plotted
+    X  : The values that have been previously traversed
+    mode : mode = "predict" if the GaussianProcessEI prediction is disired
+         or mode = "EI" if the expected improvement is desired
+    k_fig  : The suffix seed for saving the figure
+    
+    """
+    import matplotlib.pyplot as plt
+
+    # Plot for 2d
+    num_points = 50
+    phi_m = np.linspace(-1, 1, num_points)
+    phi_p = np.linspace(-1, 1, num_points)
+    X_plot,Y_plot = np.meshgrid(phi_p, phi_m)
+
+    points = np.array([X_plot.flatten().tolist(), Y_plot.flatten().tolist()]).T
+
+    # Get mean values at each of the grid points
+    Z = np.zeros(X_plot.shape)
+    if mode == "predict":
+        file_prefix = "pred"
+        Z_rolled = bma.predict(points)
+        k = 0
+        for i in range(num_points):
+            for j in range(num_points):
+                Z[i,j] = Z_rolled[k]
+                k += 1
+
+    fig, ax = plt.subplots()
+
+    p = ax.pcolor(X_plot, Y_plot, Z, cmap='RdBu', vmin=Z.min(), vmax=Z.max())
+    cb = fig.colorbar(p, ax=ax)
+    plt.scatter(X[:,0], X[:,1])
+    plt.savefig("figures/gp_fig_"+file_prefix+"_"+str(k_fig)+".png")
+
+
+# Create process object
+bma = bo.process_objects.QuadraticBayesianModelAverage(ndim = 2)
+
+A = np.array([[1, 0],[0,1]])
+b = np.array([[0],[0]])
+d = 2
+a = np.array([[-0.5],[-0.5]])
+bma.add_model(A, b, d, a)
+
+X = a.T
+
+A = np.array([[-50, 20],[20, 40]])
+b = np.array([[3],[2]])
+d = 10
+a = np.array([[0],[0]])
+bma.add_model(A, b, d, a)
+
+X = np.vstack([X, a.T])
+
+A = np.array([[10, 0],[0, 20]])
+mean = np.array([[0],[0.5]])
+fmean = -10
+[A, b, d] = bo.process_objects.centered_quad_to_quad(A, mean, fmean)
+a = np.array([[0],[0.5]])
+
+bma.add_model(A, b, d, a)
+
+X = np.vstack([X, a.T])
+
+print(X)
+print(bma.predict_single(np.array([[0.0],[0.0]])))
+
+
+#plot(bma, X, 'predict', 1)
