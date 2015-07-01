@@ -66,7 +66,7 @@ bma.add_model(A, b, d, a)
 X = a.T
 
 A = np.array([[20, 0],[0, 20]])
-mean = np.array([[0.5],[0.5]])
+mean = np.array([[0.01],[0.5]])
 fmean = 5
 [A, b, d] = bo.process_objects.centered_quad_to_quad(A, mean, fmean)
 a = np.array([[0.0],[0.0]])
@@ -89,7 +89,7 @@ X = np.vstack([X, a.T])
 
 print(X)
 
-plot(bma, X, 'predict', 1)
+#plot(bma, X, 'predict', 1)
 
 print("LOL")
 print(bma.predict_single(np.array([[0.0],[0.5]])))
@@ -100,3 +100,4 @@ print(bma.predict_single(np.array([[0.0],[0.25]])))
 X_test = np.array(np.array([[0.0,0.5],[0.01,0.43], [0.0, 0.0], [0.0, 0.25]]))
 
 print(bma.predict(X_test))
+print(bma.predict_single_grad(np.array([[0.0], [0.5]])))

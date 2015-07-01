@@ -5,8 +5,8 @@ offset = 0
 
 def r(x):
     """ Custom residuals function """
-    #return np.array([x[0]-.5, x[1]-.5])
-    return np.array([3*(np.tanh(10*x[0]-10*x[1]-8)-.1), x[0], x[1]-.5])
+    return np.array([x[0]-.5, x[1]-.5])
+    #return np.array([3*(np.tanh(10*x[0]-10*x[1]-8)-.1), x[0], (x[1]-.5)])
     #return np.array([4*x[0], x[1]])
 
 def f(x):
@@ -59,15 +59,18 @@ def plot(bma, X, mode, k_fig):
     # Get mean values at each of the grid points
     Z = np.zeros(X_plot.shape)
     S = np.zeros(X_plot.shape)
+    U = np.zeros(X_plot.shape)
     if mode == "predict":
-        Z_rolled = bma.predict(points)
+        Z_rolled = bma.predict_with_unc(points.T)
         k = 0
         for i in range(num_points):
             for j in range(num_points):
                 # Mean
-                Z[i,j] = Z_rolled[k, 0]
+                Z[i,j] = Z_rolled[0, k]
                 # Std
-                S[i,j] = Z_rolled[k, 1]
+                S[i,j] = Z_rolled[1, k]
+                # Uncertainty
+                U[i,j] = Z_rolled[2, k]
                 k += 1
 
         fig, ax = plt.subplots()
@@ -83,6 +86,15 @@ def plot(bma, X, mode, k_fig):
         cb = fig.colorbar(p, ax=ax)
         plt.scatter(X[:,0], X[:,1])
         plt.savefig("figures/gp_fig_std_"+str(k_fig)+".png")
+
+        fig, ax = plt.subplots()
+
+        p = ax.pcolor(X_plot, Y_plot, U, cmap='RdBu', vmin=0, vmax=100)
+        cb = fig.colorbar(p, ax=ax)
+        plt.scatter(X[:,0], X[:,1])
+        plt.savefig("figures/gp_fig_unc_"+str(k_fig)+".png")
+
+
 
 ndim = 2
 
@@ -106,11 +118,13 @@ for k in range(20):
     # Get y, grad, hess, and update corresponding lists
     f_val, G_val, H_val = f_full(x)
     print([k, x, f_val, G_val, H_val])
-    #f_val = f_val +  0.2*np.random.randn()
-    G_val = G_val + 0.2*np.random.randn(ndim)
-    #H_val = H_val + 2.0*np.random.randn(ndim, ndim)
-
-    bmao.add_observation(np.array([x]).T, f_val, np.array([G_val]).T, H_val)
+    f_val = f_val +  2.0*np.random.randn()
+    G_val = G_val + 2.0*np.random.randn(ndim)
+    H_add = 1.0*np.random.randn(ndim, ndim)
+    H_add = H_add.T.dot(H_add)
+    H_val = H_val + H_add
+    print([k, x, f_val, G_val, H_val])
+    bmao.add_observation(x, f_val, G_val, H_val)
     
     # Plot result
     plot(bmao, X, "predict", k)
