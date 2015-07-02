@@ -45,6 +45,8 @@ def plot(bma, X, k_fig):
         F[i] = fun(np.array([x_plot[i]]))
 
     Z_rolled = bma.predict_with_unc(x_grid)
+    model_weights, errors, N_eff, marginal_likelihoods = bma.estimate_model_weights(x_grid, return_likelihoods=True)
+
     Z = Z_rolled[0,:]
     # bma disagreement
     S = Z_rolled[1,:]
@@ -118,24 +120,39 @@ def plot(bma, X, k_fig):
     # Plot range
     ax[1].set_ylim([0, 1])
     ax[1].set_xlim([x_min, x_max])
+    ax[1].set_ylabel('prior', fontsize=16)
+
+    # Plot marginal likelihood proportionalities
+    for i in range(nModels):
+        p2_line = ax[2].plot(x_plot, marginal_likelihoods[i,:])
+        plt.setp(p2_line, linewidth=3.0, alpha=1.0, linestyle='-',
+                 dash_capstyle='round')
+
+    ax[2].set_ylim([0, 1])
+    ax[2].set_xlim([x_min, x_max])
+    ax[2].set_ylabel('L(k|D,x)', fontsize=16)
         
     # Show the model weights
     model_weights = bma.estimate_model_weights(x_grid)
     for i in range(nModels):
-        p2_line = ax[2].plot(x_plot, model_weights[i,:])
-        plt.setp(p2_line, linewidth=3.0, alpha=1.0, linestyle='-',
+        p3_line = ax[3].plot(x_plot, model_weights[i,:])
+        plt.setp(p3_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
     # Plot range
-    ax[2].set_ylim([0, 1])
-    ax[2].set_xlim([x_min, x_max])
+    ax[3].set_ylim([0, 1])
+    ax[3].set_xlim([x_min, x_max])
+    ax[3].set_ylabel('posterior', fontsize=16)
 
     # Show the kernel values 
+    """
     kernel_weights = bma.calc_relevance_weights(x_grid)
     for i in range(nModels):
         p3_line = ax[3].plot(x_plot, kernel_weights[i,:])
         plt.setp(p3_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
-
+    """
+    
+    
 
     ### Plot alpha weighted by posterior cuvature plots for each model
     model_predictions = bma.model_predictions(x_grid)
@@ -226,8 +243,8 @@ def plot(bma, X, k_fig):
 
     plt.savefig("figures/"+str(k_fig)+"_bma_model_breakdown.png")
 
-    fig3, ax = plt.subplots(2, sharex=True)
-    model_weights, errors, N_eff = bma.estimate_model_weights(x_grid, return_errors=True)
+    fig3, ax = plt.subplots(3, sharex=True)
+    model_weights, errors, N_eff, marginal_likelihoods = bma.estimate_model_weights(x_grid, return_likelihoods=True)
     
     ax[0].plot(x_plot, N_eff)
 
@@ -237,6 +254,13 @@ def plot(bma, X, k_fig):
         plt.setp(p1_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
         
+    # Plot marginal likelihoods
+
+    for i in range(nModels):
+        p2_line = ax[2].plot(x_plot, marginal_likelihoods[i,:])
+        plt.setp(p1_line, linewidth=3.0, alpha=1.0, linestyle='-',
+                 dash_capstyle='round')
+
     # Set log scale
     ax[1].set_yscale('log')
     plt.savefig("figures/"+str(k_fig)+"_bma_error_breakdown.png")
@@ -276,7 +300,7 @@ for i in range(3):
     if i<2:
         x = 3.0
     else:
-        x = -3.5+1.0*(np.random.rand(1,1)[0,0]-0.5)
+        x = 1.5+1.0*(np.random.rand(1,1)[0,0]-0.5)
 
     r1 = (50.0+50*np.sin(x))*(np.random.rand(1,1)[0]-0.5)
     r2 = 50.0*(np.random.rand(1,1)[0]-0.5)

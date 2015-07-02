@@ -118,11 +118,11 @@ for k in range(20):
     # Get y, grad, hess, and update corresponding lists
     f_val, G_val, H_val = f_full(x)
     print([k, x, f_val, G_val, H_val])
-    f_val = f_val +  2.0*np.random.randn()
-    G_val = G_val + 2.0*np.random.randn(ndim)
-    H_add = 1.0*np.random.randn(ndim, ndim)
-    H_add = H_add.T.dot(H_add)
-    H_val = H_val + H_add
+#    f_val = f_val +  2.0*np.random.randn()
+#    G_val = G_val + 2.0*np.random.randn(ndim)
+#    H_add = 1.0*np.random.randn(ndim, ndim)
+#    H_add = H_add.T.dot(H_add)
+#    H_val = H_val + H_add
     print([k, x, f_val, G_val, H_val])
     bmao.add_observation(x, f_val, G_val, H_val)
     

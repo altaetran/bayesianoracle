@@ -48,6 +48,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
         F[i] = fun(np.array([x_plot[i]]))
 
     Z_rolled = bma.predict_with_unc(x_grid)
+    model_weights, errors, N_eff, marginal_likelihoods = bma.estimate_model_weights(x_grid, return_likelihoods=True)
     Z = Z_rolled[0,:]
 
     # bma disagreement
@@ -133,32 +134,37 @@ def plot(bmap, X, k_fig, x_next, kappa):
     #fig, ax = plt.subplots(4, sharex=True)
 
     # Show the model priors
-    model_priors = bma.estimate_model_priors(x_grid)
+    log_model_priors = bma.estimate_log_model_priors(x_grid)
     for i in range(nModels):
-        p1_line = ax[1].plot(x_plot, model_priors[i,:])
+        p1_line = ax[1].plot(x_plot, np.exp(log_model_priors[i,:]))
         plt.setp(p1_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
     # Plot range
     ax[1].set_ylim([0, 1])
     ax[1].set_xlim([x_min, x_max])
+    ax[1].set_ylabel('prior', fontsize=16)
+
+    # Plot marginal likelihood proportionalities
+    for i in range(nModels):
+        p2_line = ax[2].plot(x_plot, marginal_likelihoods[i,:])
+        plt.setp(p2_line, linewidth=3.0, alpha=1.0, linestyle='-',
+                 dash_capstyle='round')
+
+    ax[2].set_ylim([0.000001, 1])
+    ax[2].set_yscale('log')
+    ax[2].set_xlim([x_min, x_max])
+    ax[2].set_ylabel('L(k|D,x)', fontsize=16)
         
     # Show the model weights
     model_weights = bma.estimate_model_weights(x_grid)
     for i in range(nModels):
-        p2_line = ax[2].plot(x_plot, model_weights[i,:])
-        plt.setp(p2_line, linewidth=3.0, alpha=1.0, linestyle='-',
-                 dash_capstyle='round')
-    # Plot range
-    ax[2].set_ylim([0, 1])
-    ax[2].set_xlim([x_min, x_max])
-
-    # Show the kernel values 
-    kernel_weights = bma.calc_relevance_weights(x_grid)
-    for i in range(nModels):
-        p3_line = ax[3].plot(x_plot, kernel_weights[i,:])
+        p3_line = ax[3].plot(x_plot, model_weights[i,:])
         plt.setp(p3_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
-
+    # Plot range
+    ax[3].set_ylim([0, 1])
+    ax[3].set_xlim([x_min, x_max])
+    ax[3].set_ylabel('posterior', fontsize=16)
 
     ### Plot alpha weighted by posterior cuvature plots for each model
     model_predictions = bma.model_predictions(x_grid)
@@ -250,7 +256,6 @@ def plot(bmap, X, k_fig, x_next, kappa):
     plt.savefig("figures/"+str(k_fig)+"_bma_model_breakdown.png")
 
     fig3, ax = plt.subplots(2, sharex=True)
-    model_weights, errors, N_eff = bma.estimate_model_weights(x_grid, return_errors=True)
     
     ax[0].plot(x_plot, N_eff)
 
@@ -265,6 +270,20 @@ def plot(bmap, X, k_fig, x_next, kappa):
     plt.savefig("figures/"+str(k_fig)+"_bma_error_breakdown.png")
     
 
+    ### Likelihood plots
+    fig4, ax = plt.subplots(2, sharex=True)
+    kernel_grid = np.logspace(-2, 2, num=50)
+    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range) for kernel_range in kernel_grid])
+    reg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False) for kernel_range in kernel_grid])
+
+    ax[0].plot(kernel_grid, unreg_loglikelihood)
+    ax[0].set_xscale('log')
+    ax[1].plot(kernel_grid, reg_loglikelihood)
+    ax[1].set_xscale('log')
+
+    plt.savefig("figures/"+str(k_fig)+"_bma_loglikelihood.png")
+
+
 
 # Create enriched process
 ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
@@ -273,7 +292,11 @@ ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
 
 def fun(x):
     #return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
-    return (np.square(np.square(x))+10.0*np.sin(x))[0]
+    #return (np.square(np.square(x))+10.0*np.sin(x))[0]
+    if x<1.0:
+        return 1.0*np.square(x-0.5)[0]
+    else:
+        return 1.0*0.25+10.0*(np.square(x))[0]-10.0
 
 h = 0.000001
 
@@ -298,7 +321,7 @@ bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1)
 n_trials = 10
 
 # Initialize x_next
-x_next = np.array([1.5])
+x_next = np.array([3.0])
 
 X = np.array([[]])
 
@@ -315,9 +338,9 @@ for k in range(20):
     r2 = (50.0+50*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
     r3 = (100.0+100*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
 
-    #r1 = 0.0
-    #r2 = 0.0
-    #r3 = 0.0
+    r1 = 0.0
+    r2 = 0.0
+    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
     f, grad, Hess = fun_all(x, r1, r2, r3)

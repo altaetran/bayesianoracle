@@ -2,13 +2,15 @@ import numpy as np
 import gptools
 import scipy.stats
 import scipy.special
+import scipy.misc
+import scipy.optimize
 # For deep copy
 import copy
 # Distribution priors
 from . import priors
 from . import misc
 # Optimizer objects
-from scipy import optimize
+
 
 class EnrichedGaussianProcess(object):
     """ Base class for holding an extended GaussianProcess object """
@@ -448,12 +450,12 @@ class QuadraticBMAProcess(object):
         self.kernel_range = 1.00;
 
         # Prior on the lambda
-        self.lambda_alpha = 3
+        self.lambda_alpha = 3.0
         self.lambda_beta = 1.0
 
         # Set prior on precision
         self.precision_alpha = 1.0 # Use 1 or 2
-        self.precision_beta = 100.0
+        self.precision_beta = 1.0
 
         # Number of lambda samples
         self.n_samples = 1000
@@ -479,12 +481,26 @@ class QuadraticBMAProcess(object):
         """
         self.precision_beta = precision_beta
         
+    def get_X_stack(self):
+        """ 
+        Get the X stack for the X data (n x n_models) matrix
+        """
+        return np.vstack([a for (y, A, b, d, a, Hchol) in self.quadratic_models]).T
+        
+    def get_y_stack(self):
+        """
+        returns n dimensional vector 
+        """
+        return np.hstack([y for (y, A, b, d, a, Hchol) in self.quadratic_models])
+
     def generate_lambda_samples(self, n_samples=-1):
         """ 
         Generates and stores the lambda samples for estimating the 
         prior distribution. Each sample is stored in self.lambda_samples
         with each column corresponding to one sample
         
+        args
+
         n_samples : Number of samples to be calculated 
         """
         # Look for default number of samples
@@ -557,6 +573,44 @@ class QuadraticBMAProcess(object):
 
         return model_priors
 
+    def estimate_log_model_priors(self, x):
+        """
+        Estimates the model priors at the positions x using the 
+        existing lambda samples
+        
+        x : n x p matrix of p positions
+        """
+        
+        if self.hessian_distances:
+            # Determine the squared distances. nModels x p matrix of distances
+            distancesSq = [np.square(np.linalg.norm(Hchol.dot(x-a[:,None]), axis=0)) 
+                           for (y, A, b, d, a, Hchol) in self.quadratic_models] 
+            distancesSq = np.vstack(distancesSq)
+        else:
+            # Determine the squared distances. nModels x p matrix of distances
+            distancesSq = [np.square(np.linalg.norm(x-a[:,None], axis=0)) 
+                           for (y, A, b, d, a, Hchol) in self.quadratic_models] 
+            distancesSq = np.vstack(distancesSq)
+
+        # Keep track of the sum of the model priors across the lambda samples
+        model_prior_avg = np.zeros((len(self.quadratic_models), x.shape[1]))
+
+        n_samples = self.lambda_samples.shape[1]
+
+        for i in range(n_samples):
+            lambda_sample = self.lambda_samples[:, i]
+            # Get the energies corresponding to this lambda sample and normalize them
+            energies = -np.multiply(lambda_sample[:, np.newaxis], distancesSq)
+            log_normalization = scipy.misc.logsumexp(energies, axis=0)
+            normalized_energies = energies - log_normalization[None,:]
+
+            prior_lambda = np.exp(normalized_energies)
+            
+            # Add to the model prior sum for this lambda
+            model_prior_avg += prior_lambda/n_samples
+
+        return np.log(model_prior_avg)
+
     def calc_kernel_weights(self, x):
         """ 
         Calculates the kernel weights at the position x
@@ -573,7 +627,8 @@ class QuadraticBMAProcess(object):
                 return 15.0/16.0*np.square(1.0-(z/self.kernel_range))/np.sqrt(self.kernel_range**self.ndim)
             
         def kernel_func(z):
-            return np.exp(-0.5*np.square(z/(self.kernel_range)))/(np.sqrt(2*np.pi)*(self.kernel_range**self.ndim))
+            #return np.exp(-0.5*np.square(z/(self.kernel_range)))/(np.sqrt(2*np.pi)*(self.kernel_range**self.ndim))
+            return np.exp(-0.5*np.square(z/(self.kernel_range)))
 
         # Vectorize the kernel function
         kernel_func_vec = np.vectorize(kernel_func)
@@ -627,7 +682,7 @@ class QuadraticBMAProcess(object):
         return x_kernel_weights
         #return relevance_weights
 
-    def estimate_model_weights(self, x, return_errors=False):
+    def estimate_model_weights(self, x, return_errors=False, return_likelihoods=False):
         """
         predicts the model weights
 
@@ -639,7 +694,6 @@ class QuadraticBMAProcess(object):
         n_models = len(self.quadratic_models)
         n_positions = x.shape[1]
 
-        model_priors = self.estimate_model_priors(x)
         # Get the relevence weights (nModels x p)
         relevance_weights = self.calc_relevance_weights(x)
 
@@ -651,17 +705,17 @@ class QuadraticBMAProcess(object):
         model_means_at_obs = np.hstack([Q(a) for (y, A, b, d, a, Hchol) in self.quadratic_models])
 
         # Get the observations made at each model
-        y_obs = np.vstack([y for (y, A, b, d, a, Hchol) in self.quadratic_models])
+        y_obs = np.hstack([y for (y, A, b, d, a, Hchol) in self.quadratic_models])
         
         # Get the J matrix
-        J_mat = model_means_at_obs - y_obs
+        J_mat = model_means_at_obs - y_obs[None,:]
         # Get the J Matrix elementwise square
         J_mat_sq = np.square(J_mat)
 
         # Calculate the effective number of samples
         N_eff = np.sum(relevance_weights, axis=0)
 
-        # Create the n_models x n_positiosn error matrix
+        # Create the n_models x n_positions error matrix
         # element i,j -> error of model i at j^th position
         errors = np.vstack([np.hstack([np.dot(relevance_weights[:,j],J_mat_sq[i,:])
                         for j in range(n_positions)]) for i in range(n_models)])
@@ -669,17 +723,27 @@ class QuadraticBMAProcess(object):
         # SET ERRORS TO ZERO
         if self.zero_errors:
             errors = errors*0
+
         # Calculate marginal likelihoods
         marginal_likelihoods = np.power(1+errors/(2*self.precision_beta), -(self.precision_alpha+N_eff/2.0))
 
-        # Multiply marignal likelihods by model priors to get unnorm model weights
-        unnorm_weights = np.multiply(marginal_likelihoods, model_priors)
-        # Normalize the weights to get the final model weights
-        col_sums = np.sum(unnorm_weights, axis=0)
-        model_weights = np.divide(unnorm_weights, col_sums[np.newaxis, :])
+        # Get the log model priors
+        log_model_priors = self.estimate_log_model_priors(x)
+
+        # Calculate log marignal likelihoods
+        log_marginal_likelihoods = np.multiply(-(self.precision_alpha+N_eff/2.0),
+                                                np.log(1+errors/(2*self.precision_beta)))
+
+        log_unnorm_weights = np.add(log_marginal_likelihoods, log_model_priors)
+
+        log_normalization = scipy.misc.logsumexp(log_unnorm_weights, axis=0)
+        
+        model_weights = np.exp(log_unnorm_weights - log_normalization[None,:])
 
         if return_errors:
             return model_weights, errors, N_eff
+        elif return_likelihoods:
+            return model_weights, errors, N_eff, np.exp(log_marginal_likelihoods)
         else:
             return model_weights
 
@@ -724,7 +788,9 @@ class QuadraticBMAProcess(object):
         bma_mean = np.sum(np.multiply(model_weights, model_means), axis = 0)
 
         # Get the expected disagreement over the models
-        bma_disagreement = np.sqrt(np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean))
+        disagreement = np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean)
+        disagreement[disagreement<0.0] = 0.0
+        bma_disagreement = np.sqrt(disagreement)
         
         # Calculate the uncertainty of each model
         prefactor = np.divide(2*(self.precision_alpha+N_eff), 2*(self.precision_alpha+N_eff)-2+soft_N_eff)
@@ -781,7 +847,7 @@ class QuadraticBMAProcess(object):
 
         return bma_probs
 
-    def loglikelihood(self, X, y):
+    def loglikelihood_data(self, X, y):
         """
         Calculates the likelihood of observing the values y at the locations X
         
@@ -791,6 +857,42 @@ class QuadraticBMAProcess(object):
         returns : loglikelihood of the input set
         """
         return np.sum(np.log(self.pdf(X, y)))
+
+    def loglikelihood(self, kernel_range, regularization=True):
+        loglikelihood = self.loglikelihood_data(self.get_X_stack(), self.get_y_stack())
+        if regularization:
+            kernel_alpha = 1
+            kernel_scale = 4.0
+            loglikelihood = loglikelihood + scipy.stats.invgamma.logpdf(kernel_range, kernel_alpha, scale=kernel_scale)
+
+        #predictions = bma.predict_with_unc(X)
+        #cv_error = np.sum(np.square(predictions[2,:])+np.square(predictions[1,:]))
+        #predictions = bma.predict_with_unc(X)
+        #cv_error = np.sum(np.abs(np.square(predictions[0,:]-y)-np.square(predictions[1,:])))
+
+        return loglikelihood
+
+    def find_kernel_MAP_estimate(self):
+
+        def minus_loglikelihood_log(log_kernel_range):
+            return -self.loglikelihood(np.exp(log_kernel_range))
+
+        # Bracket for the solution space and find
+        bracket = [-3, 4]
+        maxiter = 30
+        result = scipy.optimize.minimize_scalar(minus_loglikelihood_log, 
+                                                bracket=bracket,
+                                                options={'maxiter':maxiter})
+
+        # Extract the new kernel range, and set it
+        new_kernel_range = np.exp(result.x)
+        self.set_kernel_range(new_kernel_range)
+
+        if self.verbose:
+            print("bayesianoracle>> optimizing hyperparameters")
+            print("bayesianoracle>> new hyperparameters:")
+            print("bayesianoracle>> new ll         : "+str(-result.fun))
+            print("bayesianoracle>> kernel range   : "+str(new_kernel_range))
 
     def predict(self, X, bool_weights=False):
         """
@@ -807,7 +909,10 @@ class QuadraticBMAProcess(object):
 
         bma_mean = np.sum(np.multiply(model_weights, model_means), axis = 0)
 
-        bma_disagreement = np.sqrt(np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean))
+        disagreement = np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean)
+        disagreement[disagreement<0.0] = 0.0
+        bma_disagreement = np.sqrt(disagreement)
+
         if bool_weights:
             print("BayesianOracle>> model weights")
             print(model_weights)
@@ -895,9 +1000,9 @@ class EnrichedQuadraticBMAProcess(object):
 
     def get_X_stack(self):
         """
-        returns an (n x p) matrix of the p observation locations 
+        returns an (n x nModels) matrix of the nModels observation locations 
         """
-        return np.vstack([a for (y, A, b, d, a, Hchol) in self.bma.quadratic_models]).T
+        return self.bma.get_X_stack()
 
     def predict(self, X, bool_weights=False):
         return self.bma.predict(X, bool_weights)
@@ -954,234 +1059,5 @@ class EnrichedQuadraticBMAProcess(object):
 
         return bma
 
-    def cross_validate(self):
-        """ 
-        Performs grid search cross validation for the kernel range        
-        and the precision_beta hyperparameters
-        """
-
-        kernel_range_grid = [0.001, 0.01, 0.1, 0.5, 1.0, 5.0, 10.0, 100.0]
-        #kernel_range_grid = np.logspace(-3.0,5.0, num=200)
-        #kernel_range_grid = [1.0]
-        #precision_beta_grid = [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
-        precision_beta_grid = [10.0]
-        # Save current hyperparameter values
-        kernel_range_prev = self.bma.kernel_range
-        precision_beta_prev = self.bma.precision_beta
-
-        # Get the positional data set
-        X = self.get_X_stack()
-
-        # Get the function evaluations
-        y = np.hstack([y for (y, A, b, d, a, Hchol) in self.bma.quadratic_models])
-
-        # Define the cross validation function
-        def cv_error_func(kernel_range):
-            # Look at total number of models
-            n_models = self.get_n_models()
-
-            # Init cross validation error
-            cv_error = 0
-
-            # Get a permutation of the indices
-            r = np.ndarray.tolist(np.random.permutation(n_models))
-
-            # Select an index
-            for index_j in range(n_models):
-                # The training index set
-                train_idx = r[:index_j]+r[(index_j+1):]
-
-                # The training index set
-                test_idx = [r[index_j]]
-
-                # Create  validation bma
-                bma = self.create_validation_bma(train_idx)
-                # Set the kernel range and precision beta
-                bma.set_kernel_range(kernel_range)
-                bma.set_precision_beta(precision_beta)
-
-                # Stack the a values in the quadratic models corresponding to test_idx
-                X = np.hstack([self.bma.quadratic_models[j][4] for j in test_idx])
-                # Correct for 1D
-                if self.ndim == 1:
-                    X = np.array([X])
-
-                # Get the function evaluations corresponding to test_idx
-                    y = np.hstack([self.bma.quadratic_models[j][0] for j in test_idx])
-
-                    cv_type = 'likelihood'
-
-                    if cv_type == 'likelihood':
-                        cv_error = cv_error + (-bma.loglikelihood(X,y))
-                    elif cv_type == 'mean_sq':
-                        predictions = bma.predict(X)
-                        cur_error = np.sum(np.square(predictions[0,:] - y)) / n_models
-                        cv_error += cur_error
-                    else:
-                        predictions = bma.predict_with_unc(X)
-                        # Minimize the variance explained by model difference
-                        cur_error = np.sum(predictions[2,:])
-                        #cur_error = np.square(predictions[2,:])+np.square(predictions[1,:])
-                        cv_error += cur_error
-
-            return cv_error
-
-        min_cv_error = 9999999999999999999999.0
-        min_kernel_range = kernel_range_prev
-        min_precision_beta = precision_beta_prev
-
-        for i in range(len(kernel_range_grid)):
-            for j in range(len(precision_beta_grid)):
-                kernel_range = kernel_range_grid[i]
-                precision_beta = precision_beta_grid[j]
-                print "Kernel range, precision beta"
-                print [kernel_range, precision_beta]
-
-                # Validate
-                cv_error = cv_error_func(kernel_range, precision_beta)
-                print("cross validation error: "+str(cv_error))
-
-                # Compare to previous min
-                if cv_error < min_cv_error:
-                    # Replace with new point
-                    min_cv_error = cv_error
-                    min_kernel_range = kernel_range
-                    min_precision_beta = precision_beta
-
-        # Set the new hyperparameters
-        self.bma.kernel_range = min_kernel_range
-        self.bma.precision_beta = min_precision_beta
-
-        if self.verbose:
-            print("BayesianOracle>> new hyperparameters:")
-            print("BayesianOracle>> kernel range   : "+str(min_kernel_range))
-            print("BayesianOracle>> precision beta : "+str(min_precision_beta))
-
-    def cross_validate_kernel_range(self):
-        """ 
-        Performs grid search cross validation for the kernel range hyperparamter
-        using binary search. Problem is supposedly convex.
-        """
-
-        # Look at total number of models
-        n_models = self.get_n_models()
-
-        # Create the grid of possible kernel values 
-        kernel_range_grid = np.logspace(-3.0,5.0, num=2**10)
-
-        # Save current hyperparameter values
-        kernel_range_prev = self.bma.kernel_range
-        precision_beta = self.bma.precision_beta
-
-        # Get the positional data set
-        X = self.get_X_stack()
-
-        # Get the function evaluations
-        y = np.hstack([y for (y, A, b, d, a, Hchol) in self.bma.quadratic_models])
-
-        # Define the cross validation function
-        def cv_error_func(kernel_range, precision_beta):
-
-            # Init cross validation error
-            cv_error = 0
-
-            # Get a permutation of the indices
-            r = np.ndarray.tolist(np.random.permutation(n_models))
-
-            # Select an index
-            for index_j in range(n_models):
-                # The training index set
-                train_idx = r[:index_j]+r[(index_j+1):]
-
-                # The training index set
-                test_idx = [r[index_j]]
-
-                # Create  validation bma
-                bma = self.create_validation_bma(train_idx)
-                # Set the kernel range and precision beta
-                bma.set_kernel_range(kernel_range)
-                bma.set_precision_beta(precision_beta)
-            
-                # Stack the a values in the quadratic models corresponding to test_idx
-                X = np.vstack([self.bma.quadratic_models[j][4] for j in test_idx]).T
-
-                # Get the function evaluations corresponding to test_idx
-                y = np.hstack([self.bma.quadratic_models[j][0] for j in test_idx])
-
-                cv_type = 'likelihood'
-
-                if cv_type == 'likelihood':
-                    cv_error = cv_error + (-bma.loglikelihood(X,y))
-                elif cv_type == 'mean_sq':
-                    predictions = bma.predict(X)
-                    cur_error = np.sum(np.square(predictions[0,:] - y)) / n_models
-                    cv_error += cur_error
-                else:
-                    predictions = bma.predict_with_unc(X)
-                    # Minimize the variance explained by model difference
-                    #cur_error = np.sum(predictions[2,:])
-                    #cur_error = np.sum(predictions[2,:])
-                    cur_error = np.square(predictions[2,:])+np.square(predictions[1,:])
-                    cv_error += cur_error
-
-            return cv_error
-
-        def cv_error_func(kernel_range, precision_beta):
-            # Look at total number of models
-            n_models = self.get_n_models()
-
-            # Init cross validation error
-            cv_error = 0
-
-            # Get a permutation of the indices
-            r = np.ndarray.tolist(np.random.permutation(n_models))
-            
-            # Create  validation bma
-            bma = self.create_validation_bma(r)
-            # Set the kernel range and precision beta
-            bma.set_kernel_range(kernel_range)
-            bma.set_precision_beta(precision_beta)
-
-            cv_error = -bma.loglikelihood(X, y)
-            #mu = 0.0
-            #shape = np.exp(mu)
-            #scale = 1
-            #cv_error = cv_error - scipy.stats.lognorm.logpdf(kernel_range, shape, scale=scale)
-            kernel_alpha = 1
-            kernel_scale = 2.0
-            #cv_error = cv_error - scipy.stats.invgamma.logpdf(kernel_range, kernel_alpha, scale=kernel_scale)
-            cv_error = cv_error - scipy.stats.invgamma.logpdf(kernel_range, kernel_alpha, scale=kernel_scale)
-
-            #predictions = bma.predict_with_unc(X)
-            #cv_error = np.sum(np.square(predictions[2,:])+np.square(predictions[1,:]))
-            #predictions = bma.predict_with_unc(X)
-            #np.sum(np.square(np.square(predictions[0,:]-y)-np.square(predictions[1,:])))
-
-            return cv_error
-
-        #log_kernel_range = np.log(kernel_range_prev)
-        def log_cv_error_func(log_kernel_range):
-            return cv_error_func(np.exp(log_kernel_range), precision_beta)
-
-        # Bracket for the solution space
-        bracket = [-3, 4]
-        maxiter = 20
-        result = optimize.minimize_scalar(log_cv_error_func, 
-                                          bracket=bracket,
-                                          options={'maxiter':maxiter})
-        #result = optimize.minimize(log_cv_error_func,
-        #                           self.bma.kernel_range)
-
-        kernel_range_new = np.exp(result.x)
-        #precision_beta_new = np.exp(result.x)
-
-        # Set the new hyperparameters
-        self.bma.kernel_range = kernel_range_new
-        #self.bma.precision_beta = precision_beta_new
-
-        if self.verbose:
-            print("bayesianoracle>> optimizing hyperparameters")
-            print("bayesianoracle>> new hyperparameters:")
-            print("bayesianoracle>> new error      : "+str(result.fun))
-            print("bayesianoracle>> kernel range   : "+str(kernel_range_new))
-            #print("BayesianOracle>> kernel range   : "+str(precision_beta_new))
+    def optimize_hyperparameters(self):
+        self.bma.find_kernel_MAP_estimate()

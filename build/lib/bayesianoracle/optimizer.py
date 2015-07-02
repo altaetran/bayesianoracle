@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+from collections import Counter
 from . import process_objects
 from . import misc
 
@@ -14,6 +15,9 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.kappa_detail = 0.1
         self.trust_explore = 3.0
         self.trust_detail = 3.0
+
+        # trust radius is kernel_mult * kernel_range
+        self.kernel_mult = 2.0
         
         self.iteration = 0
         # Number of iterations under the detail regime
@@ -45,14 +49,14 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         Locates the next point to begin optimization
         """
 
-        # Cross validate BMA
-        self.cross_validate_kernel_range()
+        # Optimize
+        self.optimize_hyperparameters()
 
         # Use the defaults if trusts are zero
         if trust_detail == 0.0:
-            trust_detail = self.bma.kernel_range
+            trust_detail = self.kernel_mult*self.bma.kernel_range
         if trust_explore == 0.0:
-            trust_explore = self.bma.kernel_range
+            trust_explore = self.kernel_mult*self.bma.kernel_range
 
         # Set the trust radii
         self.trust_detail = trust_detail
@@ -60,6 +64,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         
         # Set the near threshold 
         self.near_thresh = self.trust_detail/5.0
+
+        # Locate current location of the minimum
+        if self.verbose:
+            print("bayesianoracle>> locating current estimate of the minimum location")
+            self.locate_min_point()
+            print("bayesianoracle>> ")
 
         if self.iteration == 0:
             # Increment detail run count and iteration
@@ -86,11 +96,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # Get the number of distances below thresh
         n_below_thresh = sum([dist < self.near_thresh for dist in dists])
 
-        # Locate current location of the minimum
-        if self.verbose:
-            print("bayesianoracle>> locating current estimate of the minimum location")
-            self.locate_min_point()
-
         # If below thresh, then do detail, otherwise do explore
         if n_below_thresh < self.near_num_thresh:
             self.detail_run_count += 1
@@ -109,35 +114,19 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             return self.locate_exploration_point()
 
     def locate_exploration_point(self):
-        # Get the anchor point to be the point that minimizes observed f
-        f_vals = [f for (x, f, g, H, b, d, Hchol) in self.data]
-        x_anchor = self.data[np.argmin(f_vals)][0]
-
-        return self.locate_acquisition_point(x0 = x_anchor, trust_radius=self.trust_explore, kappa=self.kappa_explore)
+        return self.locate_acquisition_point(trust_radius=self.trust_explore, kappa=self.kappa_explore)
 
     def locate_detail_point(self):
-        # Get the anchor point to be the point that minimizes observed f
-        f_vals = [f for (x, f, g, H, b, d, Hchol) in self.data]
-        x_anchor = self.data[np.argmin(f_vals)][0]
-
-        return self.locate_acquisition_point(x0 = x_anchor, trust_radius=self.trust_detail, kappa=self.kappa_detail)
-        #return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=self.kappa_detail)
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=self.kappa_detail)
 
     def locate_min_point(self):
-        # Get the anchor point to be the point that minimizes observed f
-        f_vals = [f for (x, f, g, H, b, d, Hchol) in self.data]
-        x_anchor = self.data[np.argmin(f_vals)][0]
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=0.0)
 
-        return self.locate_acquisition_point(x0 = x_anchor, trust_radius=2.0, kappa=0.0)
-
-    def locate_acquisition_point(self, x0=None, trust_radius=1.0, kappa=1.0):
+    def locate_acquisition_point(self, trust_radius=1.0, kappa=1.0):
         """ Suggest a new point, X, that minimizes the expected improvement
 
         Parameters
         ----------
-        x0 : Initial starting point for discounted mean minimization. Setting x0 to None
-             defaults the starting point to the last most iteration
-             x0 must be n x 1 matrix
         tr : Trust radius for the EI minimization. Defaults to 10. All solutions
              proposed must be within trust_radius distance from x0 
 
@@ -147,33 +136,52 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         if self.verbose:
             misc.tic()
-            
-        # Use default of last iteration if x0 is None type
-        if x0 is None:
-            x0 = self.data[-1][0]
-            
-        # Set kernel range of BMA to be half of the trust radius
-        #self.set_kernel_range(trust_radius/20.0)
 
-        # Convert to vector
-        x0 = np.squeeze(np.asarray(x0))
+        # Get number of models
+        n_models = self.get_n_models()
+
+        # (n x n_models) stack of observations
+        X_stack = self.get_X_stack()
 
         # Seed the trust region and find the best point
-        nseed = 10000
+        n_seed = 10000
 
-        # Generate random lengths in [0,trust_radius]
-        U = scipy.random.random(size=(nseed, 1))
-        lengths = trust_radius*(U**(1.0/self.ndim))
-        # Get uniformly distributed directions
-        directions = scipy.random.randn(nseed, self.ndim)
-        row_norms = np.sum(directions**2,axis=1)**(1./2)
+        def gen_n_seed_around(x0, n_seed, trust_radius):
+            """
+            Creates n_seed points sampled uniformly from a ball about x0
+            of radius trust_radius
+            
+            args
+            
+            x0   : (n dimensional vector) containing the location center
+            n_seed : (scalar) number of points to be sampled 
+            trust_radius : (scalar) radius of the ball
+            """
+            # Generate random lengths in [0,trust_radius]
+            U = scipy.random.random(size=(n_seed, 1))
+            lengths = trust_radius*(U**(1.0/self.ndim))
+            # Get uniformly distributed directions
+            directions = scipy.random.randn(n_seed, self.ndim)
+            row_norms = np.sum(directions**2,axis=1)**(1./2)
 
-        # Normalize the directions, then multiply by the lengths
-        row_mult = (row_norms / lengths.T).T
-        X_search = (directions / row_mult) + x0
+            # Normalize the directions, then multiply by the lengths
+            row_mult = (row_norms / lengths.T).T
+            X_search = (directions / row_mult) + x0
         
-        # Finally transpose to get a n x nseed matrix
-        X_search = X_search.T
+            # Finally transpose to get a n x n_seed matrix
+            X_search = X_search.T
+
+            return X_search
+
+        # create a list of model indices to sample from, then sample it
+        index_list = np.arange(0,n_models)
+        index_samples = np.random.choice(index_list, (n_seed,), replace=True)
+
+        # Get the counts of the indices
+        counter = Counter(index_samples)
+
+        X_search = np.hstack([gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
+                              for i in range(n_models)])
 
         # Maximize expected improvement over search points
         discounted_means = self.calculate_discounted_mean(X_search, kappa)
@@ -181,8 +189,10 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         x_search = X_search[:, j_min]
         X_min = discounted_means[j_min]
 
+
         def trust_check(x):
-            return trust_radius - np.linalg.norm(x-x0)
+            # Trust to any point in 
+            return trust_radius - np.min(np.linalg.norm(X_stack - x[:,None], axis=0))
 
         def dm(x):
             # Get the vectorized form into the correct n x 1 form
@@ -193,7 +203,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         result = scipy.optimize.minimize(dm, x_search,
                                          constraints=constraints,
                                          #jac=True,
-                                         options={'maxiter':50},
+                                         options={'maxiter':100},
                                          method='COBYLA')
         
         if self.verbose:

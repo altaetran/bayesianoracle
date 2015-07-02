@@ -49,8 +49,8 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         Locates the next point to begin optimization
         """
 
-        # Optimize
-        self.optimize_hyperparameters()
+        # Cross validate BMA
+        self.cross_validate_kernel_range()
 
         # Use the defaults if trusts are zero
         if trust_detail == 0.0:
@@ -188,7 +188,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         j_min = np.argmin(discounted_means)
         x_search = X_search[:, j_min]
         X_min = discounted_means[j_min]
-
 
         def trust_check(x):
             # Trust to any point in 
