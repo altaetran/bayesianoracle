@@ -57,14 +57,24 @@ class ExponentialPrior(object):
             raise ValueError("Unsupported interval!")
 
 class GammaPrior(object):
-    """ Single dimensional Log normal prior """
-    def __init__(self, shape, scale):
+    """ Single dimensional gamma prior """
+    def __init__(self, shape=1.0, scale=1.0):
         self.a = shape
         self.scale = scale
+
+    def set_mode_var(self, mode, var):
+        # Determine beta and alpha for Gamma using the mean and var
+        beta = (mode + np.sqrt(np.square(mode)+4.0*var)) / (2.0*var)
+        alpha = np.square(beta)*var
+        
+        # Set the shape param to alpha
+        self.a = alpha
+        # Set the scale to the reciprocal of beta
+        self.scale = 1.0 / beta
 
     def rvs(self, size=None):
         return scipy.stats.gamma.rvs(self.a, scale = self.scale,
                                      size=size)
 
     def logpdf(self, x):
-        return scipy.stats.expon.logpdf(x, self.a, scale=self.scale)
+        return scipy.stats.gamma.logpdf(x, self.a, scale=self.scale)

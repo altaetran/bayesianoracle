@@ -441,28 +441,28 @@ class QuadraticBMAProcess(object):
         self.ndim = ndim
         self.verbose = verbose
 
-        # Initialize models list and weightPriors list 
-        self.quadratic_models = []
-        self.lambda_priors = []
-        
-        self.lambda_samples = []
-        # Default kernel range
-        self.kernel_range = 1.00;
+        self.quadratic_models = []  # Init models list
+        self.kernel_range = 1.00;  # Default kernel range
+        self.__init_priors()  # Initialize priors
+        self.lambda_samples = []                  
+        self.n_samples = 1000  # Num lambda samples each gen
 
-        # Prior on the lambda
+        # Additional two testing options
+        self.hessian_distances = hessian_distances
+        self.zero_errors = zero_errors
+
+    def __init_priors(self):
+        # Prior on the lambda (product of independent gammas)
+        self.lambda_priors = []
         self.lambda_alpha = 3.0
         self.lambda_beta = 1.0
 
         # Set prior on precision
-        self.precision_alpha = 1.0 # Use 1 or 2
-        self.precision_beta = 1.0
+        self.precision_alpha = 1.00  # Use 1 or 2 for differing results
+        self.precision_beta = 100.0
 
-        # Number of lambda samples
-        self.n_samples = 1000
-
-        # HessianDistances
-        self.hessian_distances = hessian_distances
-        self.zero_errors = zero_errors
+        # Set the kernel prior to a default gamma
+        self.kernel_prior = priors.GammaPrior()
 
     def set_kernel_range(self, kernel_range):
         """ 
@@ -471,6 +471,14 @@ class QuadraticBMAProcess(object):
         kernel_range : desired kernnel_range. Default is 1, but can be changed
         """
         self.kernel_range = kernel_range
+
+    def set_kernel_prior(self, kernel_prior):
+        """
+        Setter for the kernel prior
+
+        kernel_prior : prior object from priors.py
+        """
+        self.kernel_prior = kernel_prior
 
     def set_precision_beta(self, precision_beta):
         """
@@ -503,18 +511,17 @@ class QuadraticBMAProcess(object):
 
         n_samples : Number of samples to be calculated 
         """
-        # Look for default number of samples
         if n_samples == -1:
-            n_samples = self.n_samples
+            n_samples = self.n_samples  # If default, use built in default
             
-        self.lambda_samples = []
+        self.lambda_samples = []  # Reset samples
 
-        # Samples of the possible lambdas. Array of nModels x n_samples
+        # Generate samples of the possible lambdas. 
         for i in xrange(len(self.quadratic_models)):
             # Get n_samples samples of Lambda values for the i^th model
             self.lambda_samples.append(self.lambda_priors[i].rvs(size=n_samples))
 
-        # Stack Lambdas to get the final lambdas
+        # self.lambda_samples is a (n_models x n_samples) matrix
         self.lambda_samples = np.vstack(self.lambda_samples)
         
     def add_model(self, y, A, b, d, a, Hchol):
@@ -524,9 +531,11 @@ class QuadraticBMAProcess(object):
         Hchol is inverse Hessian
         """
 
-        # Append to the set of models
+        # Append model data to the set of models
         self.quadratic_models.append([y, A, b, d, a, Hchol])
-        self.lambda_priors.append(priors.GammaPrior(self.lambda_alpha, self.lambda_beta))
+        # Create new Gamma prior for the new lambda
+        new_prior = priors.GammaPrior(self.lambda_alpha, self.lambda_beta)
+        self.lambda_priors.append(new_prior)
 
     def estimate_model_priors(self, x):
         """
@@ -623,12 +632,12 @@ class QuadraticBMAProcess(object):
             if (z > self.kernel_range):
                 return 0.0
             else:
-
-                return 15.0/16.0*np.square(1.0-(z/self.kernel_range))/np.sqrt(self.kernel_range**self.ndim)
+                #return 15.0/16.0*np.square(1.0-np.square(z/self.kernel_range))/np.sqrt(self.kernel_range**self.ndim)
+                return (np.square(1.0-np.square(z/self.kernel_range)))**3
             
-        def kernel_func(z):
-            #return np.exp(-0.5*np.square(z/(self.kernel_range)))/(np.sqrt(2*np.pi)*(self.kernel_range**self.ndim))
-            return np.exp(-0.5*np.square(z/(self.kernel_range)))
+            #def kernel_func(z):
+        #    #return np.exp(-0.5*np.square(z/(self.kernel_range)))/(np.sqrt(2*np.pi)*(self.kernel_range**self.ndim))
+            #return np.exp(-0.5*np.square(z/(self.kernel_range)))
 
         # Vectorize the kernel function
         kernel_func_vec = np.vectorize(kernel_func)
@@ -656,6 +665,8 @@ class QuadraticBMAProcess(object):
             # Calculate the relevence weights for each model, and then stack them vertically
             kernel_weights = np.vstack([kernel_func_vec(np.linalg.norm(x-a[:,None], axis=0))
                                            for (y, A, b, d, a, Hchol) in self.quadratic_models])
+
+        #print(kernel_weights)
 
         return kernel_weights
 
@@ -689,18 +700,19 @@ class QuadraticBMAProcess(object):
         x : n x p matrix containing p locations at which weights are desired
         returns : (nModels x p) matrix of model weights
         """
-        
-        # Num models
         n_models = len(self.quadratic_models)
-        n_positions = x.shape[1]
+        n_positions = x.shape[1]  # Number of positions to check (p)
 
         # Get the relevence weights (nModels x p)
         relevance_weights = self.calc_relevance_weights(x)
 
-        # Get the quadratic predictions at each position
         def Q(x):
+            """
+            Model evaluations on all the values of x
+            """
             return np.vstack([(0.5*(A.dot(x)).T.dot(x) + b.T.dot(x) + d)
                     for (y, A, b, d, a, Hchol) in self.quadratic_models])
+
         # gets a n_models x n_models matrix with quadratic of model i on observation x_j
         model_means_at_obs = np.hstack([Q(a) for (y, A, b, d, a, Hchol) in self.quadratic_models])
 
@@ -742,10 +754,9 @@ class QuadraticBMAProcess(object):
 
         if return_errors:
             return model_weights, errors, N_eff
-        elif return_likelihoods:
+        if return_likelihoods:
             return model_weights, errors, N_eff, np.exp(log_marginal_likelihoods)
-        else:
-            return model_weights
+        return model_weights
 
     def model_predictions(self, X):
         """
@@ -781,6 +792,8 @@ class QuadraticBMAProcess(object):
 
         model_weights, errors, N_eff = self.estimate_model_weights(X, return_errors=True)
 
+        N_eff = N_eff+soft_N_eff
+
         model_means = self.model_predictions(X)
         # multiply by model weights to get prediction
         
@@ -793,13 +806,14 @@ class QuadraticBMAProcess(object):
         bma_disagreement = np.sqrt(disagreement)
         
         # Calculate the uncertainty of each model
-        prefactor = np.divide(2*(self.precision_alpha+N_eff), 2*(self.precision_alpha+N_eff)-2+soft_N_eff)
-        divfactor = (self.precision_alpha+0.5*N_eff)+soft_N_eff
+        alpha_n = self.precision_alpha+0.5*N_eff
+        prefactor = np.divide(2*alpha_n, 2*alpha_n-2)
+        divfactor = alpha_n
         postfactor = (self.precision_beta+0.5*errors) / divfactor[None,:]
         model_unc = postfactor * prefactor[None,:]
         bma_unc = np.sum(np.multiply(model_weights, model_unc), axis = 0)
         bma_sqrtunc = np.sqrt(bma_unc)
-        return np.vstack([bma_mean, bma_disagreement, bma_sqrtunc])
+        return np.vstack([bma_mean, bma_disagreement, bma_sqrtunc, N_eff])
 
     def pdf(self, X, y):
         """ 
@@ -823,16 +837,17 @@ class QuadraticBMAProcess(object):
         divfactor = (self.precision_alpha+0.5*N_eff)
         postfactor = (self.precision_beta+0.5*errors) / divfactor[None,:]
         
-        # Sigma  for the student t posterior distributions are postfactor square root
+        # Sigma for the student t posterior distributions are postfactor square root
         sigma = np.sqrt(postfactor)
         
         # Get nu (1 x p) vector
-        nu = 2*(self.precision_alpha+N_eff)
+        nu = 2*self.precision_alpha+N_eff
 
         # Get z scores  (nModels x p)
         z = (y[None, :] - model_means) / sigma
         
         # Model probabilities (nModels x p)
+        #print('lol')
         #print model_means
         #print z
         #print sigma
@@ -847,9 +862,48 @@ class QuadraticBMAProcess(object):
 
         return bma_probs
 
+    def estimate_skewness(self, kernel_range=-1):
+        """
+        Calcualtes the skewness of the data involved
+        """
+        if kernel_range != -1:
+            old_kernel_range = self.kernel_range 
+            self.kernel_range = kernel_range
+            bool_restore = True
+        else:
+            bool_restore = False
+
+        predictions = self.predict_with_unc(self.get_X_stack())
+        y = self.get_y_stack()
+
+        sample_size = len(self.quadratic_models)
+        
+        # Get the true variance of the points
+        var = np.square(predictions[1, :]) + np.square(predictions[2, :])
+
+        # Get residuals
+        resi = predictions[0, :] - y
+
+
+        if sample_size != 1:
+            # Get third moment
+            numerator = np.sum(np.power(resi, 3))/sample_size
+            denominator = np.power((np.sum(var)/(sample_size-1)), 3.0/2.0)
+        
+            skew = np.divide(numerator, denominator)
+
+        else:
+            skew = 0
+        
+        if bool_restore:
+            self.kernel_range = old_kernel_range
+
+        return skew
+
     def loglikelihood_data(self, X, y):
         """
-        Calculates the likelihood of observing the values y at the locations X
+        Calculates the loglikelihood of observing the values y at the 
+        location X. No regularization of the kernel range is included
         
         X : (n x p) array of locations
         y : p dimensional vector witth corresponding observations 
@@ -858,12 +912,27 @@ class QuadraticBMAProcess(object):
         """
         return np.sum(np.log(self.pdf(X, y)))
 
-    def loglikelihood(self, kernel_range, regularization=True):
+    def loglikelihood(self, kernel_range, regularization=True, skew=True):
+        # Save old kernel range
+        old_kernel_range = self.kernel_range
+        self.kernel_range = kernel_range
+
         loglikelihood = self.loglikelihood_data(self.get_X_stack(), self.get_y_stack())
+
+        """
         if regularization:
-            kernel_alpha = 1
-            kernel_scale = 4.0
-            loglikelihood = loglikelihood + scipy.stats.invgamma.logpdf(kernel_range, kernel_alpha, scale=kernel_scale)
+            kernel_alpha = 2.0
+            kernel_scale = 2.0
+            loglikelihood = loglikelihood + scipy.stats.gamma.logpdf(kernel_range, kernel_alpha, scale=kernel_scale)
+
+        if skew:
+            skew_b = 0.01
+            loglikelihood = loglikelihood - np.abs(self.estimate_skewness())/skew_b
+            """
+        if regularization:
+            loglikelihood += self.kernel_prior.logpdf(kernel_range)
+            
+        self.kernel_range = old_kernel_range  # restore old kernel_range
 
         #predictions = bma.predict_with_unc(X)
         #cv_error = np.sum(np.square(predictions[2,:])+np.square(predictions[1,:]))
@@ -878,8 +947,8 @@ class QuadraticBMAProcess(object):
             return -self.loglikelihood(np.exp(log_kernel_range))
 
         # Bracket for the solution space and find
-        bracket = [-3, 4]
-        maxiter = 30
+        bracket = [-2, 2]
+        maxiter = 50
         result = scipy.optimize.minimize_scalar(minus_loglikelihood_log, 
                                                 bracket=bracket,
                                                 options={'maxiter':maxiter})
@@ -893,6 +962,33 @@ class QuadraticBMAProcess(object):
             print("bayesianoracle>> new hyperparameters:")
             print("bayesianoracle>> new ll         : "+str(-result.fun))
             print("bayesianoracle>> kernel range   : "+str(new_kernel_range))
+
+    def find_kernel_min_skew(self):
+
+        def abs_skew(log_kernel_range):
+            old_kernel_range = self.kernel_range
+            self.kernel_range = np.exp(log_kernel_range)
+            skew = self.estimate_skewness()
+            self.kernel_range = old_kernel_range
+
+            return np.abs(skew)
+
+        # Bracket for the solution space and find
+        bracket = [-3, 4]
+        maxiter = 30
+        result = scipy.optimize.minimize_scalar(abs_skew,
+                                                bracket=bracket,
+                                                options={'maxiter':maxiter})
+
+        # Extract the new kernel range, and set it
+        new_kernel_range = np.exp(result.x)
+        self.set_kernel_range(new_kernel_range)
+
+        if self.verbose:
+            print("bayesianoracle>> optimizing hyperparameters")
+            print("bayesianoracle>> new hyperparameters:")
+            print("bayesianoracle>> new ll         : "+str(-result.fun))
+            print("bayesianoracle>> kernel range   : "+str(new_kernel_range))        
 
     def predict(self, X, bool_weights=False):
         """
@@ -953,24 +1049,32 @@ def centered_quad_to_quad(A, mean, f_mean):
 class EnrichedQuadraticBMAProcess(object):
     """ Base class for holding an extended QuadraticBMA object """
     def __init__(self, ndim,
-                 verbose=True):
+                 verbose=True,
+                 init_kernel_range=1.0):
 
         # Set dimension size, constraints, and maximum derivative order
         self.ndim = ndim
         self.verbose=verbose
 
-        # Create initial data segment
-        self.data_init = []
-
-        # Intialize data segment
-        self.data = copy.deepcopy(self.data_init)
+        self.data_init = []  # Create initial data list
+        self.data = []  # Create the data list
 
         # Hessian Distances? (Only for convex problems)
         self.hessian_distances = False
 
         # Initialize BMAProcess
-        self.bma = QuadraticBMAProcess(ndim=ndim, 
+        self.bma = QuadraticBMAProcess(ndim=ndim,
+                                       verbose=self.verbose,
                                        hessian_distances=self.hessian_distances)
+
+        self.set_kernel_range(init_kernel_range)  # Set init kernel_range
+        
+    def set_kernel_prior(self, mode, var):
+        """ Sets the kernel prior using just the mode and the var """
+
+        kernel_prior = priors.GammaPrior()  # Default GammaPrior
+        kernel_prior.set_mode_var(mode, var)  # Set Gamma params
+        self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
 
     def add_observation(self, x, f, g, H):
         """ Add an observation at x with uspecified error
@@ -979,22 +1083,17 @@ class EnrichedQuadraticBMAProcess(object):
         g : value of the gradient at the observed point (n x 1)
         H : value of the Hessian at the observed point (n x n) """
         
-        # Find the quadratic model for this observation and add to list of models
-        [A, b, d] = der_to_quad(x, f, g, H)
+        [A, b, d] = der_to_quad(x, f, g, H)  # Converted quadratic model
+
         if self.hessian_distances:
-            Hchol = np.linalg.inv(np.linalg.cholesky(H))
+            Hchol = np.linalg.inv(np.linalg.cholesky(H))  # Hchol if needed
         else:
-            Hchol = 0*A
+            Hchol = None
         
-        # Add to the data list
-        self.data.append((x, f, g, H, b, d, Hchol))
-
-        # Add the observation to the bma
-        self.bma.add_model(f, A, b, d, x, Hchol)
-
-        # Regenerate lambda samples
-        self.bma.generate_lambda_samples()
-        
+        self.data.append((x, f, g, H, b, d, Hchol))  # Add to data list
+        self.bma.add_model(f, A, b, d, x, Hchol)  # Add to bma
+        self.bma.generate_lambda_samples()  # Generate new lambda samples
+         
     def get_n_models(self):
         return len(self.bma.quadratic_models)
 
@@ -1023,10 +1122,12 @@ class EnrichedQuadraticBMAProcess(object):
         predictions = self.bma.predict_with_unc(X)
         # Get means and unexplained standard deviation
         means = predictions[0, :]
+        exp_std = predictions[1, :]
         unexp_std = predictions[2, :]
+        n_eff = predictions[3, :]
 
-        # Protect the -Inf
-        unexp_std[unexp_std == np.inf] = 10e40
+        exp_std[exp_std == np.inf] = 10e40  # Protect against inf
+        unexp_std[unexp_std == np.inf] = 10e40  # Protect against inf
 
         # Return the discounted means
         return means - kappa*unexp_std
@@ -1061,3 +1162,5 @@ class EnrichedQuadraticBMAProcess(object):
 
     def optimize_hyperparameters(self):
         self.bma.find_kernel_MAP_estimate()
+        #self.bma.find_kernel_min_skew()
+

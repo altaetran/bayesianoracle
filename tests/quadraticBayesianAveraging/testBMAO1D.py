@@ -271,15 +271,30 @@ def plot(bmap, X, k_fig, x_next, kappa):
     
 
     ### Likelihood plots
-    fig4, ax = plt.subplots(2, sharex=True)
-    kernel_grid = np.logspace(-2, 2, num=50)
-    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range) for kernel_range in kernel_grid])
-    reg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False) for kernel_range in kernel_grid])
+    fig4, ax = plt.subplots(3, sharex=True)
+    kernel_grid = np.logspace(-1.5, 2, num=50)
 
-    ax[0].plot(kernel_grid, unreg_loglikelihood)
+    # Get the likelihoods 
+    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False, skew=False) for kernel_range in kernel_grid])
+    skewness = np.array([bma.estimate_skewness(kernel_range) for kernel_range in kernel_grid])
+    reg_loglikelihood = np.array([bma.loglikelihood(kernel_range) for kernel_range in kernel_grid])
+
+    # Plot the two terms
+    ll1 = ax[0].plot(kernel_grid, unreg_loglikelihood)
     ax[0].set_xscale('log')
-    ax[1].plot(kernel_grid, reg_loglikelihood)
+    ll2 = ax[1].plot(kernel_grid, skewness)
     ax[1].set_xscale('log')
+    ll3 = ax[2].plot(kernel_grid, reg_loglikelihood)
+    ax[2].set_xscale('log')
+
+    plt.setp(ll1, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
+             dash_capstyle='round')
+    plt.setp(ll2, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
+             dash_capstyle='round')
+    plt.setp(ll3, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
+             dash_capstyle='round')
+
+    ax[2].set_xlabel("kernel range",fontsize=16)
 
     plt.savefig("figures/"+str(k_fig)+"_bma_loglikelihood.png")
 
@@ -291,13 +306,14 @@ ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
 # Create the function
 
 def fun(x):
-    #return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
+    return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
     #return (np.square(np.square(x))+10.0*np.sin(x))[0]
+    """
     if x<1.0:
         return 1.0*np.square(x-0.5)[0]
     else:
         return 1.0*0.25+10.0*(np.square(x))[0]-10.0
-
+        """
 h = 0.000001
 
 def fun_all(x,r1=0.0, r2=0.0, r3=0.0, bool_zero=False):
@@ -334,13 +350,13 @@ for k in range(20):
         X = np.hstack([X, np.array([x_next])])
     
     # Make up errors
-    r1 = (50.0+50*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r2 = (50.0+50*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r3 = (100.0+100*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
+    r1 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
+    r2 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
+    r3 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
 
-    r1 = 0.0
-    r2 = 0.0
-    r3 = 0.0
+#    r1 = 0.0
+#    r2 = 0.0
+#    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
     f, grad, Hess = fun_all(x, r1, r2, r3)

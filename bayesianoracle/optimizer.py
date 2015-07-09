@@ -7,25 +7,31 @@ from . import misc
 class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
     def __init__(self, 
                  ndim,
-                 verbose=True):
+                 verbose=True,
+                 init_kernel_range=1.0):
+
         super(QuadraticBMAOptimizer, self).__init__(ndim=ndim,
-                                                    verbose=verbose)
+                                                    verbose=verbose,
+                                                    init_kernel_range=init_kernel_range)
         
         self.kappa_explore = 0.1
         self.kappa_detail = 0.1
-        self.trust_explore = 3.0
-        self.trust_detail = 3.0
+        self.trust_explore = -1.0
+        self.trust_detail = -1.0
+
+        # Set the kernel prior
+        self.set_kernel_prior(init_kernel_range, 10.0)
 
         # trust radius is kernel_mult * kernel_range
         self.kernel_mult = 2.0
         
         self.iteration = 0
+
         # Number of iterations under the detail regime
         self.detail_run_count = 0
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
         self.near_num_thresh = 10000
-        # Threshold for what is "near"
 
     def set_kappa_detail(self, kappa):
         """ 
@@ -35,6 +41,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         kappa : value for the kappa parameter
         """
         self.kappa_detail = kappa
+
     def set_kappa_explore(self, kappa):
         """ 
         Setter for the kappa value for the detail steps
@@ -49,7 +56,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         Locates the next point to begin optimization
         """
 
-        # Optimize
         self.optimize_hyperparameters()
 
         # Use the defaults if trusts are zero
@@ -199,7 +205,10 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             return self.calculate_discounted_mean(np.array([x]).T, kappa)
 
         
+        # dd trust radius constraint
         constraints = {'type' : 'ineq', 'fun': trust_check}
+
+        # Create results 
         result = scipy.optimize.minimize(dm, x_search,
                                          constraints=constraints,
                                          #jac=True,
@@ -209,23 +218,27 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         if self.verbose:
             print("BayesianOracle>> found in " + str(misc.toc()) + " seconds")
 
-        # Check if the objective function was decresased
+        # Check if the objective function decreased from random search
         b_success = (X_min > result.fun) and (trust_check(result.x) >= 0)
-        #b_success = False
+
         # If additional optimization was successful, return result, otherwise return x_search
         if b_success:
             print("BayesianOracle>> additional optimization successful")
             print("BayesianOracle>> minimum of %.5f at" % result.fun)
             print(result.x)
-            m, s, u = self.predict_with_unc(np.array([result.x]).T)
-            print("bayesianoracle>> mean: %.5f," %m + " explained std: %.5f," %s + " unexplained std: %.5f" %u)
-            #print(self.predict(np.array([result.x]).T, bool_weights=True))
+            m, s, u, n = self.predict_with_unc(np.array([result.x]).T)
+            print("bayesianoracle>> mean: %.5f," %m + 
+                  " explained std: %.5f," %s + 
+                  " unexplained std: %.5f" %u + 
+                  " effective sample size: %.2f" %n)
             return result.x
         else:
             print("BayesianOracle>> additional optimization failed")
             print("BayesianOracle>> minimum of %.5f at" % X_min)
             print(x_search)
-            m, s, u = self.predict_with_unc(np.array([x_search]).T)
-            print("bayesianoracle>> mean: %.5f," %m + " explained std: %.5f," %s + " unexplained std: %.5f" %u)
-            #print(self.predict(np.array([x_search]).T, bool_weights=True))
+            m, s, u, n = self.predict_with_unc(np.array([x_search]).T)
+            print("bayesianoracle>> mean: %.5f," %m + 
+                  " explained std: %.5f," %s + 
+                  " unexplained std: %.5f" %u + 
+                  " effective sample size: %.2f" %n)
             return x_search
