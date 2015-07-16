@@ -724,7 +724,7 @@ class QuadraticBMAProcess(object):
 
         args:
         -----
-        X : n x p matrix containing the p locations at which the weights 
+        X : (n x p matrix) containing the p locations at which the weights 
             are desired.
     
         returns: 
