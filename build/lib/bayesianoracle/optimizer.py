@@ -7,23 +7,48 @@ from . import misc
 class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
     def __init__(self, 
                  ndim,
-                 verbose=True,
-                 init_kernel_range=1.0):
+                 init_kernel_range=1.0,
+                 init_kernel_var=10.0,
+                 kappa_explore=0.5,
+                 kappa_detail=0.0,
+                 kernel_mult=2.0,
+                 precision_alpha=1.0,
+                 precision_beta=100.0,
+                 verbose=True):
+        """
+        Class initializer. 
+
+        args:
+        -----
+        ndim              : (scalar) number of dimensions of the location space
+        init_kernel_range : (scalar) initial guess of the kernel range
+        init_kernel_var   : (scalar) guess of the spread in the kernel range
+                            values
+        kappa_explore     : (scalar) the kappa value to use in the exploration
+                            phase
+        kappa_detail      : (scalar) the kappa value to use in the detail phase
+        kernel_mult       : (scalar) the value used to determine the trust radius
+                            from the current estimate of the kernel width
+                            i.e. trust = kernel_width*kernel_mult
+        precision_alpha   : (scalar) the alpha value for the gamma prior on precision
+        precision_beta    : (scalar) the beta value for the gamma prior on precision
+        verbose           : (boolean) report progress throughout optimization?
+        """
 
         super(QuadraticBMAOptimizer, self).__init__(ndim=ndim,
                                                     verbose=verbose,
                                                     init_kernel_range=init_kernel_range)
-        
-        self.kappa_explore = 0.1
-        self.kappa_detail = 0.1
-        self.trust_explore = -1.0
-        self.trust_detail = -1.0
 
-        # Set the kernel prior
-        self.set_kernel_prior(init_kernel_range, 10.0)
+        self.set_precision_prior_params(precision_alpha, precision_beta)
+        
+        self.kappa_explore = kappa_explore
+        self.kappa_detail = kappa_detail
+
+        # Set the default gamma kernel prior
+        self.set_gamma_kernel_prior(init_kernel_range, init_kernel_var)
 
         # trust radius is kernel_mult * kernel_range
-        self.kernel_mult = 2.0
+        self.kernel_mult = kernel_mult
         
         self.iteration = 0
 
@@ -37,8 +62,9 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         """ 
         Setter for the kappa value for the detail steps
 
-        args
-        kappa : value for the kappa parameter
+        args:
+        -----
+        kappa : (scalar) value for the kappa parameter in the discounted means
         """
         self.kappa_detail = kappa
 
@@ -46,19 +72,29 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         """ 
         Setter for the kappa value for the detail steps
 
-        args
-        kappa : value for the kappa parameter
+        args:
+        -----
+        kappa : (scalar) value for the kappa parameter in the discounted means
         """
         self.kappa_explore = kappa
 
     def locate_next_point(self, trust_detail=0.0, trust_explore=0.0):
         """
-        Locates the next point to begin optimization
-        """
+        Locates the next point to begin optimization. Hyperparameters
+        are optimized in this function.
+        
+        args:
+        -----
+        trust_detail  : (scalar) trust radius to use for detail steps.
+        trust_explore : (scalar) trust radius to use for exploration steps.
 
+        if either is set to 0.0, then the default calculation using the 
+        current kernel_range to set the trust_radius for the variables
+        set to 0.0
+        """
         self.optimize_hyperparameters()
 
-        # Use the defaults if trusts are zero
+        # Use the default trust calculation if trusts are zero
         if trust_detail == 0.0:
             trust_detail = self.kernel_mult*self.bma.kernel_range
         if trust_explore == 0.0:
@@ -73,16 +109,15 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         # Locate current location of the minimum
         if self.verbose:
-            print("bayesianoracle>> locating current estimate of the minimum location")
+            print("BayesianOracle>> locating current estimate of the minimum location")
             self.locate_min_point()
-            print("bayesianoracle>> ")
 
         if self.iteration == 0:
             # Increment detail run count and iteration
             self.detail_run_count += 1
             self.iteration += 1
             if self.verbose:
-                print("bayesianoracle>> requesting detail point")
+                print("BayesianOracle>> requesting detail point")
             return self.locate_detail_point()
 
         # Return detail point if only 1 previous detail point has been generated
@@ -90,7 +125,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             self.detail_run_count +=1
             self.iteration +=1
             if self.verbose:
-                print("bayesianoracle>> requesting detail point")
+                print("BayesianOracle>> requesting detail point")
             return self.locate_detail_point()
         # Get all past detail_run_count iterations worth of data. X has all data with columns
         # Corresponding to spatial dimensions
@@ -107,7 +142,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             self.detail_run_count += 1
             self.iteration += 1
             if self.verbose:
-                print("bayesianoracle>> requesting detail point")
+                print("BayesianOracle>> requesting detail point")
                 print("BayesianOracle>> locating acqusition point... ")
             return self.locate_detail_point()
         else:
@@ -115,7 +150,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             self.detail_run_count = 0
             self.iteration +=1
             if self.verbose:
-                print("bayesianoracle>> requesting exploration point")
+                print("BayesianOracle>> requesting exploration point")
                 print("BayesianOracle>> locating acqusition point... ")
             return self.locate_exploration_point()
 
@@ -216,7 +251,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                                          method='COBYLA')
         
         if self.verbose:
-            print("BayesianOracle>> found in " + str(misc.toc()) + " seconds")
+            print("BayesianOracle>> found in %.1f seconds" % misc.toc())
 
         # Check if the objective function decreased from random search
         b_success = (X_min > result.fun) and (trust_check(result.x) >= 0)
@@ -225,20 +260,22 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         if b_success:
             print("BayesianOracle>> additional optimization successful")
             print("BayesianOracle>> minimum of %.5f at" % result.fun)
-            print(result.x)
+            print("BayesianOracle>> "+str(result.x))
             m, s, u, n = self.predict_with_unc(np.array([result.x]).T)
-            print("bayesianoracle>> mean: %.5f," %m + 
+            print("BayesianOracle>> mean: %.5f," %m + 
                   " explained std: %.5f," %s + 
                   " unexplained std: %.5f" %u + 
                   " effective sample size: %.2f" %n)
+            print("")
             return result.x
         else:
             print("BayesianOracle>> additional optimization failed")
             print("BayesianOracle>> minimum of %.5f at" % X_min)
-            print(x_search)
+            print("BayesianOracle>> "+str(x_search))
             m, s, u, n = self.predict_with_unc(np.array([x_search]).T)
-            print("bayesianoracle>> mean: %.5f," %m + 
+            print("BayesianOracle>> mean: %.5f," %m + 
                   " explained std: %.5f," %s + 
                   " unexplained std: %.5f" %u + 
                   " effective sample size: %.2f" %n)
+            print("")
             return x_search

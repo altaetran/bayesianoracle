@@ -306,8 +306,8 @@ ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
 # Create the function
 
 def fun(x):
-    return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
-    #return (np.square(np.square(x))+10.0*np.sin(x))[0]
+    #return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
+    return (np.square(np.square(x))+10.0*np.sin(x))[0]
     """
     if x<1.0:
         return 1.0*np.square(x-0.5)[0]
