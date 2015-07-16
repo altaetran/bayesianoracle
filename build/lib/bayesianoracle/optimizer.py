@@ -163,17 +163,60 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
     def locate_min_point(self):
         return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=0.0)
 
+    def __gen_n_seed_around(self, x0, n_seed, trust_radius):
+        """
+        Creates n_seed points sampled uniformly from a ball about x0
+        of radius trust_radius
+
+        args:
+        -----
+
+        x0           : (n dimensional vector) containing the location 
+                       center
+        n_seed       : (scalar) number of points to be sampled 
+        trust_radius : (scalar) radius of the ball
+
+        returns:
+        --------
+        (n x n_seed matrix) of n_seed locations within trust_radius
+        distance from x0.
+        """
+        # Generate random lengths in [0,trust_radius]
+        U = scipy.random.random(size=(n_seed, 1))
+        lengths = trust_radius*(U**(1.0/self.ndim))
+        # Get uniformly distributed directions
+        directions = scipy.random.randn(n_seed, self.ndim)
+        row_norms = np.sum(directions**2,axis=1)**(1./2)
+
+        # Normalize the directions, then multiply by the lengths
+        row_mult = (row_norms / lengths.T).T
+        X_search = (directions / row_mult) + x0
+
+        # Finally transpose to get a n x n_seed matrix
+        X_search = X_search.T
+
+        return X_search
+
     def locate_acquisition_point(self, trust_radius=1.0, kappa=1.0):
-        """ Suggest a new point, X, that minimizes the expected improvement
+        """
+        Locates a new location within trust_radius distance of any previous 
+        tested locations for future function evaluations. The new location
+        is a minimizer of the acquisition function, which takes in parameter
+        kappa. Prints out indicators in the case of the verbose option.
+        
+        args:
+        -----
+        trust_radius : (scalar) the maximum distance between any new proposed
+                       location and any previouslly attempted locations
+        kappa        : (scalar) the parameter for the acqusition function.
+                       In the case of discounted means, the kappa value
+                       determines the level to which uncertainty is used
+                       in the acquisition funcftion.
 
-        Parameters
-        ----------
-        tr : Trust radius for the EI minimization. Defaults to 10. All solutions
-             proposed must be within trust_radius distance from x0 
-
-        Output
-        -------
-        X_guess : shape = (n_features,) """
+        returns:
+        --------
+        (n dimensional vector) of the new proposed location. 
+        """
 
         if self.verbose:
             misc.tic()
@@ -187,33 +230,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # Seed the trust region and find the best point
         n_seed = 10000
 
-        def gen_n_seed_around(x0, n_seed, trust_radius):
-            """
-            Creates n_seed points sampled uniformly from a ball about x0
-            of radius trust_radius
-            
-            args
-            
-            x0   : (n dimensional vector) containing the location center
-            n_seed : (scalar) number of points to be sampled 
-            trust_radius : (scalar) radius of the ball
-            """
-            # Generate random lengths in [0,trust_radius]
-            U = scipy.random.random(size=(n_seed, 1))
-            lengths = trust_radius*(U**(1.0/self.ndim))
-            # Get uniformly distributed directions
-            directions = scipy.random.randn(n_seed, self.ndim)
-            row_norms = np.sum(directions**2,axis=1)**(1./2)
-
-            # Normalize the directions, then multiply by the lengths
-            row_mult = (row_norms / lengths.T).T
-            X_search = (directions / row_mult) + x0
-        
-            # Finally transpose to get a n x n_seed matrix
-            X_search = X_search.T
-
-            return X_search
-
         # create a list of model indices to sample from, then sample it
         index_list = np.arange(0,n_models)
         index_samples = np.random.choice(index_list, (n_seed,), replace=True)
@@ -221,7 +237,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # Get the counts of the indices
         counter = Counter(index_samples)
 
-        X_search = np.hstack([gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
+        X_search = np.hstack([self.__gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
                               for i in range(n_models)])
 
         # Maximize expected improvement over search points
