@@ -891,21 +891,19 @@ class QuadraticBMAProcess(object):
         
         returns:
         --------
-        (3 x p matrix) of predictions. 1st row is means. 2nd row is 
+        (4 x p matrix) of predictions. 1st row is means. 2nd row is 
         unexplained standard deviation. 3rd row is explained standard
-        deviation.
+        deviation. 4th row is the effective sample size.
         """
         # Minimum N_eff to prevent dividing by zero
         soft_N_eff = 10e-8
 
         model_weights, errors, N_eff = self.estimate_model_weights(X, return_errors=True)
 
-        N_eff = N_eff+soft_N_eff
-
-        model_means = self.model_predictions(X)
-        # multiply by model weights to get prediction
+        N_eff = N_eff+soft_N_eff  # Update soft minimum for sample size
+        model_means = self.model_predictions(X)  # Individual model predictions
         
-        # Get prediction means over the models
+        # Get prediction means over the models via weighted average.
         bma_mean = np.sum(np.multiply(model_weights, model_means), axis = 0)
 
         # Get the expected disagreement over the models

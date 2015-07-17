@@ -306,8 +306,8 @@ ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
 # Create the function
 
 def fun(x):
-    #return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
-    return (np.square(np.square(x))+10.0*np.sin(x))[0]
+    return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
+    #return (np.square(np.square(x))+10.0*np.sin(x))[0]
     """
     if x<1.0:
         return 1.0*np.square(x-0.5)[0]
@@ -351,12 +351,12 @@ for k in range(20):
     
     # Make up errors
     r1 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r2 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r3 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
+    r2 = (40.0+40*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
+    r3 = (60.0+60*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
 
-#    r1 = 0.0
-#    r2 = 0.0
-#    r3 = 0.0
+    r1 = 0.0
+    r2 = 0.0
+    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
     f, grad, Hess = fun_all(x, r1, r2, r3)

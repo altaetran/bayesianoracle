@@ -9,7 +9,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  ndim,
                  init_kernel_range=1.0,
                  init_kernel_var=10.0,
-                 kappa_explore=2.0,
+                 kappa_explore=5.0,
                  kappa_detail=0.5,
                  kernel_mult=2.0,
                  precision_alpha=1.0,
@@ -52,11 +52,13 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         
         self.iteration = 0
 
+        self.x_min_hist = None  # (n x iteration matrix) of min locations
+
         # Number of iterations under the detail regime
         self.detail_run_count = 0
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
-        self.near_num_thresh = 10000
+        self.near_num_thresh = 3
 
     def set_kappa_detail(self, kappa):
         """ 
@@ -105,13 +107,21 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.trust_explore = trust_explore
         
         # Set the near threshold 
-        self.near_thresh = self.trust_detail/5.0
+        self.near_thresh = self.trust_detail/2.0
 
         # Locate current location of the minimum
         if self.verbose:
             print("BayesianOracle>> locating current estimate of the minimum location")
-            self.locate_min_point()
+        x_min = self.locate_min_point()  # located expected minimum
+        
+        # Add to the x_min_hist
+        if self.iteration == 0:
+            self.x_min_hist = np.array([x_min]).T
+        else:
+            self.x_min_hist = np.hstack([self.x_min_hist, 
+                                         np.array([x_min]).T])
 
+        # Default cause if no other information is available
         if self.iteration == 0:
             # Increment detail run count and iteration
             self.detail_run_count += 1
@@ -127,12 +137,9 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             if self.verbose:
                 print("BayesianOracle>> requesting detail point")
             return self.locate_detail_point()
-        # Get all past detail_run_count iterations worth of data. X has all data with columns
-        # Corresponding to spatial dimensions
-        X = np.vstack([x for (x, f, g, H, b, d, Hchol) in self.data[-self.detail_run_count:]]).T
 
-        # Get pdist matrix
-        dists = scipy.spatial.distance.pdist(X, 'euclidean')
+        # Pdist needs (num observations x dimension) input matrix
+        dists = scipy.spatial.distance.pdist(self.x_min_hist.T, 'euclidean')
         
         # Get the number of distances below thresh
         n_below_thresh = sum([dist < self.near_thresh for dist in dists])
@@ -228,7 +235,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         X_stack = self.get_X_stack()
 
         # Seed the trust region and find the best point
-        n_seed = 10000
+        n_seed = 1000
 
         # create a list of model indices to sample from, then sample it
         index_list = np.arange(0,n_models)
@@ -246,7 +253,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         x_search = X_search[:, j_min]
         X_min = discounted_means[j_min]
 
-
         def trust_check(x):
             # Trust to any point in 
             return trust_radius - np.min(np.linalg.norm(X_stack - x[:,None], axis=0))
@@ -254,7 +260,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         def dm(x):
             # Get the vectorized form into the correct n x 1 form
             return self.calculate_discounted_mean(np.array([x]).T, kappa)
-
         
         # dd trust radius constraint
         constraints = {'type' : 'ineq', 'fun': trust_check}
@@ -274,24 +279,22 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         # If additional optimization was successful, return result, otherwise return x_search
         if b_success:
+            x_final = result.x  # Get the optimization result
             print("BayesianOracle>> additional optimization successful")
             print("BayesianOracle>> minimum of %.5f at" % result.fun)
-            print("BayesianOracle>> "+str(result.x))
-            m, s, u, n = self.predict_with_unc(np.array([result.x]).T)
-            print("BayesianOracle>> mean: %.5f," %m + 
-                  " explained std: %.5f," %s + 
-                  " unexplained std: %.5f" %u + 
-                  " effective sample size: %.2f" %n)
-            print("")
-            return result.x
         else:
+            x_final = x_search  # Otherwise get randomized search results
             print("BayesianOracle>> additional optimization failed")
             print("BayesianOracle>> minimum of %.5f at" % X_min)
-            print("BayesianOracle>> "+str(x_search))
-            m, s, u, n = self.predict_with_unc(np.array([x_search]).T)
-            print("BayesianOracle>> mean: %.5f," %m + 
-                  " explained std: %.5f," %s + 
-                  " unexplained std: %.5f" %u + 
-                  " effective sample size: %.2f" %n)
-            print("")
-            return x_search
+
+        print("BayesianOracle>> " + str(x_final))
+
+        # Get information about the current location
+        m, u, s, n = self.predict_with_unc(np.array([x_final]).T)
+        print("BayesianOracle>> mean: %.5f," %m + 
+              " unexplained std: %.5f" %u + 
+              " explained std: %.5f," %s + 
+              " effective sample size: %.2f" %n)
+        print("")
+
+        return x_final
