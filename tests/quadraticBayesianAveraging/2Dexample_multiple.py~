@@ -6,23 +6,15 @@ from pprint import pprint as pp
 ndim = 2
 bmao = bo.optimizer.QuadraticBMAOptimizer(ndim=ndim)
 
-H = np.array([[  1389.4217,   1151.5168],
-           [  1151.5168,  36896.3534]])
-g = np.array([  643.2191,  6206.7597])
-f = 596.83446220293399
-xk = np.array([ 0.,  0.])
+
+for i in xrange(100):
+    H = np.array([[  1389.4217,   1151.5168],
+                  [  1151.5168,  36896.3534]])
+    g = np.array([  643.2191,  6206.7597])
+    f = 596.83446220293399 + np.rand
+    xk = np.array([ 0.,  0.])
 
 bmao.add_observation(xk, f, g, H)
-
-for i in xrange(3):
-    H = np.array([[  1846.2641,    870.278 ],
-                  [   870.278 ,  31874.2671]])
-    g = np.array([  -71.6421, -1062.788 ])
-    f = 18.327839153167439
-    xk = np.array([-0.332, -0.158])
-
-    bmao.add_observation(xk, f, g, H)
-
 """
 H = np.array([[  1846.2641,    870.278 ],
               [   870.278 ,  31874.2671]])

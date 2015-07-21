@@ -405,7 +405,7 @@ class MultiIndependentTaskGaussianProcess(object):
         sigma **= 0.5
         return mean, sigma
 
-    def discounted_mean(self, X, kappa=1):
+    def discounted_mean(self, X, kappa=1.0):
         """ Calculates the expected improvement in the Chi Square variable
         past a specific threshold 
 
@@ -909,7 +909,7 @@ class QuadraticBMAProcess(object):
         # Get the expected disagreement over the models
         disagreement = np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean)
         disagreement[disagreement<0.0] = 0.0
-        bma_disagreement = np.sqrt(disagreement)
+        unexp_std = np.sqrt(disagreement)
         
         # Calculate the uncertainty of each model
         alpha_n = self.precision_alpha+0.5*N_eff
@@ -918,8 +918,13 @@ class QuadraticBMAProcess(object):
         postfactor = (self.precision_beta+0.5*errors) / divfactor[None,:]
         model_unc = postfactor * prefactor[None,:]
         bma_unc = np.sum(np.multiply(model_weights, model_unc), axis = 0)
-        bma_sqrtunc = np.sqrt(bma_unc)
-        return np.vstack([bma_mean, bma_disagreement, bma_sqrtunc, N_eff])
+        exp_std = np.sqrt(bma_unc)
+
+        exp_std[exp_std == np.inf] = 10e40  # Protect against inf
+        unexp_std[unexp_std == np.inf] = 10e40  # Protect against inf
+
+        
+        return np.vstack([bma_mean, unexp_std, exp_std, N_eff])
 
     def pdf(self, X, y):
         """ 
@@ -1267,9 +1272,26 @@ class EnrichedQuadraticBMAProcess(object):
         """
         self.bma.set_kernel_range(kernel_range)
 
+    def calculate_N_eff(self, X):
+        """ 
+        Calculates the effective sample size at the desired locations
+        
+        args:
+        -----
+        X : (n x p matrix) of p proposed locations at which
+            sample sizes are desired
+
+        returns:
+        --------
+        (1 x p matrix) of sample sizes
+        """
+        model_weights, errors, N_eff = self.bma.estimate_model_weights(X, return_errors=True)
+        return N_eff
+
     def calculate_discounted_mean(self, X, kappa=0.1):
         """ 
         Calculates the discounted_mean = mean - kappa * unexplained_std
+        + nu*n_eff
         at the p locations in X
 
         X     : (n x p matrix) of p proposition points at which discounted_means
@@ -1277,15 +1299,10 @@ class EnrichedQuadraticBMAProcess(object):
         kappa : (scalar) std multiplier used in the discounted means calculation
         """
         # Get the predictions
-        predictions = self.bma.predict_with_unc(X)
+        predictions = self.bma.predict(X)
         # Get means and unexplained standard deviation
         means = predictions[0, :]
         unexp_std = predictions[1, :]
-        exp_std = predictions[2, :]
-        n_eff = predictions[3, :]
-
-        exp_std[exp_std == np.inf] = 10e40  # Protect against inf
-        unexp_std[unexp_std == np.inf] = 10e40  # Protect against inf
 
         # Return the discounted means
         return means - kappa*unexp_std

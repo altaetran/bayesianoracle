@@ -8,12 +8,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
     def __init__(self, 
                  ndim,
                  init_kernel_range=1.0,
-                 init_kernel_var=10.0,
+                 init_kernel_var=5.0,
                  kappa_explore=5.0,
-                 kappa_detail=0.5,
+                 kappa_detail=0.10,
                  kernel_mult=2.0,
                  precision_alpha=1.0,
-                 precision_beta=100.0,
+                 precision_beta=1.0,
                  verbose=True):
         """
         Class initializer. 
@@ -50,15 +50,22 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # trust radius is kernel_mult * kernel_range
         self.kernel_mult = kernel_mult
         
-        self.iteration = 0
-
-        self.x_min_hist = None  # (n x iteration matrix) of min locations
-
-        # Number of iterations under the detail regime
-        self.detail_run_count = 0
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
-        self.near_num_thresh = 3
+        self.num_near_thresh = 3
+
+        self.__init_iteration_variables()
+
+    def __init_iteration_variables(self):
+        """
+        Initializes the variables that are used for the phase control
+        """
+        self.iteration = 0  # Iteration number
+        self.x_min_hist = None  # (n x iteration matrix) of min locations
+        self.run_count = 0  # Iterations since beginning of run
+        self.prev_num_near = 0  # Previous count of iterations since x_min hasn't changed
+        self.bool_exploration_ready = True  # (bool) ready for exploration phase
+        self.phase='detail'  # Current phase
 
     def set_kappa_detail(self, kappa):
         """ 
@@ -80,95 +87,109 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         """
         self.kappa_explore = kappa
 
-    def locate_next_point(self, trust_detail=0.0, trust_explore=0.0):
+    def locate_next_point(self):
         """
         Locates the next point to begin optimization. Hyperparameters
         are optimized in this function.
-        
-        args:
-        -----
-        trust_detail  : (scalar) trust radius to use for detail steps.
-        trust_explore : (scalar) trust radius to use for exploration steps.
-
-        if either is set to 0.0, then the default calculation using the 
-        current kernel_range to set the trust_radius for the variables
-        set to 0.0
         """
+
         self.optimize_hyperparameters()
 
         # Use the default trust calculation if trusts are zero
-        if trust_detail == 0.0:
-            trust_detail = self.kernel_mult*self.bma.kernel_range
-        if trust_explore == 0.0:
-            trust_explore = self.kernel_mult*self.bma.kernel_range
-
-        # Set the trust radii
-        self.trust_detail = trust_detail
-        self.trust_explore = trust_explore
+        trust = self.kernel_mult*self.bma.kernel_range
+        self.trust_detail = trust
+        self.trust_explore = trust
+        self.trust_low_density = trust
         
         # Set the near threshold 
-        self.near_thresh = self.trust_detail/2.0
+        self.near_thresh = self.trust_detail/4.0
 
         # Locate current location of the minimum
         if self.verbose:
             print("BayesianOracle>> locating current estimate of the minimum location")
         x_min = self.locate_min_point()  # located expected minimum
         
-        # Add to the x_min_hist
+        # Add location of estimated minimum to the x_min_hist
         if self.iteration == 0:
             self.x_min_hist = np.array([x_min]).T
         else:
             self.x_min_hist = np.hstack([self.x_min_hist, 
                                          np.array([x_min]).T])
 
-        # Default cause if no other information is available
-        if self.iteration == 0:
+        # Default case if no other information is available
+        if (self.iteration == 0) or (self.run_count < 1):
             # Increment detail run count and iteration
-            self.detail_run_count += 1
+            self.run_count += 1
             self.iteration += 1
             if self.verbose:
-                print("BayesianOracle>> requesting detail point")
+                print("BayesianOracle>> requesting DETAIL point")
             return self.locate_detail_point()
 
-        # Return detail point if only 1 previous detail point has been generated
-        if self.detail_run_count <= 1:
-            self.detail_run_count +=1
-            self.iteration +=1
-            if self.verbose:
-                print("BayesianOracle>> requesting detail point")
-            return self.locate_detail_point()
+        num_near = self.prev_num_near
 
-        # Pdist needs (num observations x dimension) input matrix
-        dists = scipy.spatial.distance.pdist(self.x_min_hist.T, 'euclidean')
-        
-        # Get the number of distances below thresh
-        n_below_thresh = sum([dist < self.near_thresh for dist in dists])
+        # Get the distance between new min and old min
+        dist_x_min = scipy.linalg.norm(self.x_min_hist[:,-1]-self.x_min_hist[:,-2])
 
-        # If below thresh, then do detail, otherwise do explore
-        if n_below_thresh < self.near_num_thresh:
-            self.detail_run_count += 1
-            self.iteration += 1
-            if self.verbose:
-                print("BayesianOracle>> requesting detail point")
-                print("BayesianOracle>> locating acqusition point... ")
-            return self.locate_detail_point()
+        print(dist_x_min)
+
+        # If close enough, then increment num near
+        if dist_x_min < self.near_thresh:
+            num_near += 1
         else:
-            # reset detail run count
-            self.detail_run_count = 0
-            self.iteration +=1
+            # Reset run otherwise
+            self.run_count = 0
+            num_near = 0
+            self.bool_exploration_ready = True
+
+        if num_near < self.num_near_thresh:
+            self.phase = 'detail'
+        elif self.bool_exploration_ready:
+            self.phase = 'exploration'
+            self.bool_exploration_ready = False
+        else:
+            self.phase = 'low_density'
+            self.bool_exploration_ready = True
+
+        self.iteration += 1
+        self.prev_num_near = num_near
+        self.run_count += 1
+
+        if self.phase == 'detail':
             if self.verbose:
-                print("BayesianOracle>> requesting exploration point")
-                print("BayesianOracle>> locating acqusition point... ")
+                print("BayesianOracle>> requesting DETAIL point")
+            return self.locate_detail_point()
+        elif self.phase == 'exploration':
+            if self.verbose:
+                print("BayesianOracle>> requesting EXPLORATION point")
             return self.locate_exploration_point()
+        else:
+            if self.verbose:
+                print("BayesianOracle>> requesting RANDOM LOW DENSITY point")
+            return self.locate_low_density_point()
+
+    def locate_low_density_point(self):
+        def fun(X):
+            return self.calculate_N_eff(X)
+
+        return self.locate_acquisition_point(trust_radius=self.trust_low_density, fun=fun)
 
     def locate_exploration_point(self):
-        return self.locate_acquisition_point(trust_radius=self.trust_explore, kappa=self.kappa_explore)
+        def fun(X):
+            return self.calculate_discounted_mean(X, self.kappa_explore)
+ 
+        return self.locate_acquisition_point(trust_radius=self.trust_explore, fun=fun)
 
     def locate_detail_point(self):
-        return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=self.kappa_detail)
+        def fun(X):
+            return self.calculate_discounted_mean(X, self.kappa_detail)
+
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun)
 
     def locate_min_point(self):
-        return self.locate_acquisition_point(trust_radius=self.trust_detail, kappa=0.0)
+        def fun(X):
+            return self.calculate_discounted_mean(X, 0.0)
+
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun)
 
     def __gen_n_seed_around(self, x0, n_seed, trust_radius):
         """
@@ -204,21 +225,19 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         return X_search
 
-    def locate_acquisition_point(self, trust_radius=1.0, kappa=1.0):
+    def locate_acquisition_point(self, trust_radius=1.0, fun=None):
         """
         Locates a new location within trust_radius distance of any previous 
         tested locations for future function evaluations. The new location
-        is a minimizer of the acquisition function, which takes in parameter
-        kappa. Prints out indicators in the case of the verbose option.
+        is a minimizer of the acquisition function, fun.
+        
+        Prints out indicators in the case of the verbose option.
         
         args:
         -----
         trust_radius : (scalar) the maximum distance between any new proposed
                        location and any previouslly attempted locations
-        kappa        : (scalar) the parameter for the acqusition function.
-                       In the case of discounted means, the kappa value
-                       determines the level to which uncertainty is used
-                       in the acquisition funcftion.
+        fun          : (function handle) the function to be minimized
 
         returns:
         --------
@@ -235,7 +254,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         X_stack = self.get_X_stack()
 
         # Seed the trust region and find the best point
-        n_seed = 1000
+        n_seed = 1000*self.ndim
 
         # create a list of model indices to sample from, then sample it
         index_list = np.arange(0,n_models)
@@ -247,8 +266,8 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         X_search = np.hstack([self.__gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
                               for i in range(n_models)])
 
-        # Maximize expected improvement over search points
-        discounted_means = self.calculate_discounted_mean(X_search, kappa)
+        # Minimize discounted means
+        discounted_means = fun(X_search)
         j_min = np.argmin(discounted_means)
         x_search = X_search[:, j_min]
         X_min = discounted_means[j_min]
@@ -259,7 +278,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         def dm(x):
             # Get the vectorized form into the correct n x 1 form
-            return self.calculate_discounted_mean(np.array([x]).T, kappa)
+            return fun(np.array([x]).T)
         
         # dd trust radius constraint
         constraints = {'type' : 'ineq', 'fun': trust_check}

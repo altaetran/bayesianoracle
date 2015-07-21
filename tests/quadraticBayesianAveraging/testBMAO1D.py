@@ -337,7 +337,7 @@ bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1)
 n_trials = 10
 
 # Initialize x_next
-x_next = np.array([3.0])
+x_next = np.array([2.0])
 
 X = np.array([[]])
 
