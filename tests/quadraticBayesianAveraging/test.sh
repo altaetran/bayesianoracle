@@ -6,6 +6,6 @@ cd tests/quadraticBayesianAveraging
 #python qBMAO_process_test.py
 #python quadraticBayesianAveraging1D_Function.py
 #python testEnrichedBMA.py
-#python testBMAO1D.py
-python 2Dexample.py
+python testBMAO1D.py
+#npython 2Dexample.py
 #python 2Dexample_multiple.py

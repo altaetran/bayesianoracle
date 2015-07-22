@@ -73,7 +73,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
         # Scatter of observations
         for i in range(nModels):
-            f = bma.quadratic_models[i][0]
+            f = bma.quadratic_models[i].get_y()
             ax.scatter(X[0,i], f, s=100.0, c="black", alpha=0.5)
 
         # Plot next point
@@ -240,7 +240,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
     # Now plot scatter of observations
     for i in range(nModels):
-        f = bma.quadratic_models[i][0]
+        f = bma.quadratic_models[i].get_y()
         ax[0].scatter(X[0,i],f,s=100.0, c="black", alpha=0.5)
 
     # Plot bma predictions
@@ -272,7 +272,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
     ### Likelihood plots
     fig4, ax = plt.subplots(3, sharex=True)
-    kernel_grid = np.logspace(-1.5, 2, num=50)
+    kernel_grid = np.logspace(-4.0, 1, num=50)
 
     # Get the likelihoods 
     unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False, skew=False) for kernel_range in kernel_grid])

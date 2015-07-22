@@ -427,6 +427,40 @@ class MultiIndependentTaskGaussianProcess(object):
         result += std
         return result
 
+class QuadraticModel(object):
+    def __init__(self, y, A, b, d, a):
+        """
+        Initializer class for a quadratic model of the form
+
+        0.5*x^T A x + b^T x + d
+        
+        args:
+        -----
+        y : (scalar) observed valued of y at the observation location
+        A : (n x n matrix) observed Hessian of y at the observation location
+        b : (n dimensional vector) in quad equation. Related to gradient
+        d : (scalar) in quad equation. Related to y
+        a : (n dimensional vector) observation location.
+        """
+        self.y = y
+        self.A = A
+        self.b = b
+        self.d = d
+        self.a = a
+
+    def predict(self, x):
+        """
+        Predicts the result of the deterministic model at the single input
+        location
+        """
+        return 0.5*(self.A.dot(x)).T.dot(x) + self.b.T.dot(x) + self.d
+        
+    def get_y(self):
+        return self.y
+    
+    def get_a(self):
+        return self.a
+
 class QuadraticBMAProcess(object):
     def __init__(self, 
                  ndim,
@@ -546,7 +580,7 @@ class QuadraticBMAProcess(object):
         --------
         (n x n_models matrix) of the n_models data points.
         """
-        return np.vstack([a for (y, A, b, d, a, Hchol) in self.quadratic_models]).T
+        return np.vstack([qm.get_a() for qm in self.quadratic_models]).T
         
     def get_y_stack(self):
         """
@@ -556,7 +590,7 @@ class QuadraticBMAProcess(object):
         --------
         (n dimensional vector) of the n_models function observations
         """
-        return np.hstack([y for (y, A, b, d, a, Hchol) in self.quadratic_models])
+        return np.hstack([qm.get_y() for qm in self.quadratic_models])
 
     def generate_lambda_samples(self):
         """ 
@@ -584,7 +618,8 @@ class QuadraticBMAProcess(object):
         """
 
         # Append model data to the set of models
-        self.quadratic_models.append([y, A, b, d, a, Hchol])
+        qm = QuadraticModel(y, A, b, d, a)
+        self.quadratic_models.append(qm)
         # Create new Gamma prior for the new lambda
         new_prior = priors.GammaPrior(self.lambda_alpha, self.lambda_beta)
         self.lambda_priors.append(new_prior)
@@ -612,8 +647,8 @@ class QuadraticBMAProcess(object):
             distances_sq = np.vstack(distances_sq)
         else:
             # Determine the squared distances without Hessian distances
-            distances_sq = [np.square(np.linalg.norm(X-a[:,None], axis=0)) 
-                           for (y, A, b, d, a, Hchol) in self.quadratic_models] 
+            distances_sq = [np.square(np.linalg.norm(X-qm.get_a()[:,None], axis=0)) 
+                           for qm in self.quadratic_models] 
             distances_sq = np.vstack(distances_sq)
 
         return distances_sq
@@ -710,9 +745,9 @@ class QuadraticBMAProcess(object):
             kernel_weights = np.vstack(kernel_weights) # Reformat
         else:
             # Calculate the relevence weights for each model, and then stack them vertically
-            kernel_weights = [self.kernel_func(np.linalg.norm(X-a[:,None], axis=0), 
+            kernel_weights = [self.kernel_func(np.linalg.norm(X-qm.get_a()[:,None], axis=0), 
                                                self.kernel_range)
-                              for (y, A, b, d, a, Hchol) in self.quadratic_models]
+                              for qm in self.quadratic_models]
             kernel_weights = np.vstack(kernel_weights) # Reformat
 
         return kernel_weights
@@ -767,16 +802,15 @@ class QuadraticBMAProcess(object):
 
         def Q(x):
             """
-            Model evaluations on all the values of x
+            Array of each model's prediction on x
             """
-            return np.vstack([(0.5*(A.dot(x)).T.dot(x) + b.T.dot(x) + d)
-                    for (y, A, b, d, a, Hchol) in self.quadratic_models])
+            return np.vstack([qm.predict(x) for qm in self.quadratic_models])
 
         # gets a n_models x n_models matrix with quadratic of model i on observation x_j
-        model_means_at_obs = np.hstack([Q(a) for (y, A, b, d, a, Hchol) in self.quadratic_models])
+        model_means_at_obs = np.hstack([Q(qm.get_a()) for qm in self.quadratic_models])
 
         # Get the observations made at each model
-        y_obs = np.hstack([y for (y, A, b, d, a, Hchol) in self.quadratic_models])
+        y_obs = np.hstack([qm.get_y() for qm in self.quadratic_models])
         
         # Get the J matrix
         J_mat = model_means_at_obs - y_obs[None,:]
@@ -789,7 +823,7 @@ class QuadraticBMAProcess(object):
         # Create the n_models x p error matrix
         # element i,j -> error of model i at j^th position
         errors = np.vstack([np.hstack([np.dot(relevance_weights[:,j],J_mat_sq[i,:])
-                        for j in xrange(p)]) for i in xrange(n_models)])
+                                       for j in xrange(p)]) for i in xrange(n_models)])
 
         # SET ERRORS TO ZERO
         if self.zero_errors:
@@ -839,8 +873,7 @@ class QuadraticBMAProcess(object):
         
         # Get model predictions
         def Q(x):
-            return np.vstack([(0.5*(A.dot(x)).T.dot(x) + b.T.dot(x) + d)
-                              for (y, A, b, d, a, Hchol) in self.quadratic_models])
+            return np.vstack([qm.predict(x) for qm in self.quadratic_models])
 
         # Gets a n_models x p matrix with quadratic of model i on observation x_j
         model_means = np.hstack([Q(X[:,j]) for j in xrange(p)])
@@ -986,7 +1019,6 @@ class QuadraticBMAProcess(object):
 
         # Get residuals
         resi = predictions[0, :] - y
-
 
         if sample_size != 1:
             # Get third moment
