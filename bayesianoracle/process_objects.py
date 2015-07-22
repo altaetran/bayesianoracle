@@ -951,7 +951,7 @@ class QuadraticBMAProcess(object):
         
         # Sigma for the student t posterior distributions are postfactor square root
         sigma = np.sqrt(postfactor)
-        
+
         # Get nu (1 x p) vector
         nu = 2*self.precision_alpha+N_eff
 
@@ -1008,12 +1008,34 @@ class QuadraticBMAProcess(object):
         Calculates the loglikelihood of observing the values y at the 
         location X without the contribution of the prior.
         
+        args:
+        -----
         X : (n x p matrix) of the p locations
         y : p dimensional vector witth corresponding observations 
 
-        returns : (scalar) log likelihood of the input set
+        returns: 
+        --------
+        (scalar) log likelihood of the input set
         """
         return np.sum(np.log(self.pdf(X, y)))
+
+    def cv_loglikelihood(self):
+        """
+        Calculates the cross validated log likelihood of the data
+        included in the current model
+        
+        returns:
+        --------
+        (scalar) cross validated log likelihood of the contained data
+        """
+        # Copy the quadratic models 
+        qm_cpy = copy.deepcopy(self.quadratic_models)
+
+        # Iterate through each of the data points in the model
+        for i in xrange(len(quadratic_models_cpy)):
+            x = qm_cpy[i][0]# Get point
+            # Replace old quadratic_models with new version without this point
+            self.quadratic_models = qm_cpy[:i]+qm_cpy[(i+1):]
 
     def loglikelihood(self, kernel_range, regularization=True, skew=True):
         """
@@ -1177,6 +1199,38 @@ class EnrichedQuadraticBMAProcess(object):
         var  : (scalar) variance value of the gamma distribution to be used
         """
         kernel_prior = priors.GammaPrior()  # Create default GammaPrior
+        kernel_prior.set_mode_var(mode, var)  # Set Gamma params using mode and var
+        self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
+
+    def set_invgamma_kernel_prior(self, mode, var):
+        """ 
+        Sets the kernel prior to an inverse gamma function with mode, mode,
+        and variance, var. Notice that the mode is used as apposed to
+        mean or median, because in the absence of data, the MAP estimate
+        will just be the mode.
+
+        args:
+        -----
+        mode : (scalar) mode value of the gamma distribution to be used
+        var  : (scalar) variance value of the gamma distribution to be used
+        """
+        kernel_prior = priors.InvGammaPrior()  # Create default GammaPrior
+        kernel_prior.set_mode_var(mode, var)  # Set Gamma params using mode and var
+        self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
+
+    def set_lognormal_kernel_prior(self, mode, var):
+        """ 
+        Sets the kernel prior to an inverse gamma function with mode, mode,
+        and variance, var. Notice that the mode is used as apposed to
+        mean or median, because in the absence of data, the MAP estimate
+        will just be the mode.
+
+        args:
+        -----
+        mode : (scalar) mode value of the gamma distribution to be used
+        var  : (scalar) variance value of the gamma distribution to be used
+        """
+        kernel_prior = priors.LogNormalPrior()  # Create default GammaPrior
         kernel_prior.set_mode_var(mode, var)  # Set Gamma params using mode and var
         self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
 

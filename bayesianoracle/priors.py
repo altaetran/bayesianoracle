@@ -3,9 +3,32 @@ import scipy.stats
 
 class LogNormalPrior(object):
     """ Single dimensional Log normal prior """
-    def __init__(self, mean, sigma):
+    def __init__(self, mean=1.0, sigma=1.0):
         self.mean = mean
         self.sigma = sigma
+
+    def set_mode_var(self, mode, var):
+        # Determine beta and alpha for Gamma using the mean and var
+        import scipy.optimize
+
+        def func(sigma):
+            return (np.exp(sigma**2)-1)*np.exp(3*sigma**2) - var / mode**2
+
+        sigma = scipy.optimize.fsolve(func, 1.0)[0]
+        mu = np.log(mode) + sigma**2
+
+        print('lol')
+        print(sigma)
+        print(mu)
+
+        # Set params
+        self.mean = mu
+        self.sigma = sigma
+
+        # Set the shape param to sigma
+        self.a = sigma
+        # Set the scale to exp(mu)
+        self.scale = np.exp(mu)
 
     def rvs(self, size=None):
         return scipy.stats.lognorm.rvs(self.sigma, loc=0, scale=np.exp(self.mean),
@@ -78,3 +101,31 @@ class GammaPrior(object):
 
     def logpdf(self, x):
         return scipy.stats.gamma.logpdf(x, self.a, scale=self.scale)
+
+class InvGammaPrior(object):
+    """ Single dimensional gamma prior """
+    def __init__(self, shape=1.0, scale=1.0):
+        self.a = shape
+        self.scale = scale
+
+    def set_mode_var(self, mode, var):
+        # Determine beta and alpha for Gamma using the mean and var
+        import scipy.optimize
+
+        def func(alpha):
+            return (alpha+1)**2/((alpha-1)**2*(alpha-2)) - var / mode**2
+
+        alpha = scipy.optimize.fsolve(func, 3.0)[0]
+        beta = mode*(alpha+1)
+
+        # Set the shape param to alpha
+        self.a = alpha
+        # Set the scale to beta
+        self.scale = beta
+
+    def rvs(self, size=None):
+        return scipy.stats.invgamma.rvs(self.a, scale = self.scale,
+                                     size=size)
+
+    def logpdf(self, x):
+        return scipy.stats.invgamma.logpdf(x, self.a, scale=self.scale)
