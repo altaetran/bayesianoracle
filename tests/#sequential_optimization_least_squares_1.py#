@@ -16,7 +16,7 @@ def r(x):
     #return np.array([x[0]**2-np.sin(x[1]-x[0])-.2, 1.4*(x[0]-.1)])
     #return np.array([3*(np.tanh(30*x[0]-x[1]-10)-.1), x[0], x[1]-.5])
     return np.array([3*(np.tanh(10*x[0]-10*x[1]-8)-.1), x[0], x[1]-.5])
-    #return np.array([x[0]-2*x[1]+1, np.sin(x[0])+np.cos(x[1]-x[0]**2)*n*2, .01*np.linalg.norm(x+0.5)])
+    #return np.array([x[0]-2*x[1]+1, np.sin(x[0])+np.cos(x[1]-x[0]**2)**2, .01*np.linalg.norm(x+0.5)])
     #return np.array([x[0]-0.5,x[1]-0.5])
 
 def f(x):
@@ -33,7 +33,7 @@ def J(x):
     for i in range(ndim):
         # Use finite differencing to get residual graidents
         r_grad.append((r(x+h*I[i,:])-rx)/h)
-n    return np.array(r_grad).T
+    return np.array(r_grad).T
 
 def f_full(x):
     """ Compute function val, Gradient, and Gauss-Newton Hessian approximation """

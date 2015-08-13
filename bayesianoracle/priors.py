@@ -10,16 +10,17 @@ class LogNormalPrior(object):
     def set_mode_var(self, mode, var):
         # Determine beta and alpha for Gamma using the mean and var
         import scipy.optimize
-
-        def func(sigma):
-            return (np.exp(sigma**2)-1)*np.exp(3*sigma**2) - var / mode**2
+        
+        if var / mode**2 > 1e6:
+            def func(sigma):
+                # Large sigma approximation
+                return (sigma**2)*(3*sigma**2) - np.log(var / mode**2)
+        else:
+            def func(sigma):
+                return (np.exp(sigma**2)-1)*np.exp(3*sigma**2) - var / mode**2
 
         sigma = scipy.optimize.fsolve(func, 1.0)[0]
         mu = np.log(mode) + sigma**2
-
-        print('lol')
-        print(sigma)
-        print(mu)
 
         # Set params
         self.mean = mu
@@ -29,6 +30,9 @@ class LogNormalPrior(object):
         self.a = sigma
         # Set the scale to exp(mu)
         self.scale = np.exp(mu)
+
+    def get_mode(self):
+        return np.exp(self.mean-self.sigma**2)
 
     def rvs(self, size=None):
         return scipy.stats.lognorm.rvs(self.sigma, loc=0, scale=np.exp(self.mean),
@@ -95,6 +99,9 @@ class GammaPrior(object):
         # Set the scale to the reciprocal of beta
         self.scale = 1.0 / beta
 
+    def get_mode(self):
+        return (self.a-1.0) * self.scale
+
     def rvs(self, size=None):
         return scipy.stats.gamma.rvs(self.a, scale = self.scale,
                                      size=size)
@@ -122,6 +129,9 @@ class InvGammaPrior(object):
         self.a = alpha
         # Set the scale to beta
         self.scale = beta
+
+    def get_mode(self):
+        return self.scale / (self.a + 1)
 
     def rvs(self, size=None):
         return scipy.stats.invgamma.rvs(self.a, scale = self.scale,

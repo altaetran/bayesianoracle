@@ -55,29 +55,6 @@ relevance_weights = bmao.bma.calc_relevance_weights(np.array([xk]).T)
 print("relevance weights")
 pp(relevance_weights)
 
-
-# Get the quadratic predictions at each position
-def Q(x):
-    return np.vstack([(0.5*(A.dot(x)).T.dot(x) + b.T.dot(x) + d)
-                      for (y, A, b, d, a, Hchol) in bmao.bma.quadratic_models])
-# gets a n_models x n_models matrix with quadratic of model i on observation x_j
-model_means_at_obs = np.hstack([Q(a) for (y, A, b, d, a, Hchol) in bmao.bma.quadratic_models])
-
-pp(model_means_at_obs)
-
-# Get the observations made at each model
-y_obs = np.hstack([y for (y, A, b, d, a, Hchol) in bmao.bma.quadratic_models])
-
-pp(y_obs)
-
-# Get the J matrix
-J_mat = model_means_at_obs - y_obs[None,:]
-# Get the J Matrix elementwise square
-J_mat_sq = np.square(J_mat)
-
-pp(J_mat_sq)
-
-
 bma = bmao.bma
 
 import matplotlib.pyplot as plt

@@ -7,14 +7,17 @@ from . import misc
 class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
     def __init__(self, 
                  ndim,
-                 kernel_prior_type='LogNormal',
+                 kernel_type='Gaussian',
+                 kernel_prior_type='Gamma',
                  init_kernel_range=1.0,
-                 init_kernel_var=10.0,
-                 kappa_explore=5.0,
+                 init_kernel_var=1e2,
+                 kappa_explore=1.0,
                  kappa_detail=0.10,
-                 kernel_mult=2.0,
+                 kernel_mult=1.0,
+                 kernel_mult_explore=2.0,
+                 min_trust=0.01,
                  precision_alpha=1.0,
-                 precision_beta=1.0,
+                 precision_beta=10.0,
                  verbose=True):
         """
         Class initializer. 
@@ -31,6 +34,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         kernel_mult       : (scalar) the value used to determine the trust radius
                             from the current estimate of the kernel width
                             i.e. trust = kernel_width*kernel_mult
+        min_trust         : (scalar) minimum trust radius size.
         precision_alpha   : (scalar) the alpha value for the gamma prior on precision
         precision_beta    : (scalar) the beta value for the gamma prior on precision
         verbose           : (boolean) report progress throughout optimization?
@@ -38,10 +42,13 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         super(QuadraticBMAOptimizer, self).__init__(ndim=ndim,
                                                     verbose=verbose,
-                                                    init_kernel_range=init_kernel_range)
+                                                    init_kernel_range=init_kernel_range,
+                                                    kernel_type=kernel_type)
 
         self.set_precision_prior_params(precision_alpha, precision_beta)
-        
+
+        self.init_kernel_range = init_kernel_range
+        self.min_trust = min_trust
         self.kappa_explore = kappa_explore
         self.kappa_detail = kappa_detail
 
@@ -53,14 +60,16 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         elif kernel_prior_type == 'LogNormal':
             self.set_lognormal_kernel_prior(init_kernel_range, init_kernel_var)
         else:
-            assert(False,'kernel_prior_type must be a \'Gamma\', \'InvGamma\'')
+            assert False,'kernel_prior_type must be a \'Gamma\', \'InvGamma\', or \'LogNormal\''
 
         # trust radius is kernel_mult * kernel_range
         self.kernel_mult = kernel_mult
+        self.kernel_mult_explore = kernel_mult_explore
         
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
-        self.num_near_thresh = 3
+        self.thresh_factor = 0.2 # Percetage of current kernel to warrant a "close step"
+        self.num_near_thresh = 5
 
         self.__init_iteration_variables()
 
@@ -73,7 +82,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.x_min_hist = None  # (n x iteration matrix) of min locations
         self.run_count = 0  # Iterations since beginning of run
         self.prev_num_near = 0  # Previous count of iterations since x_min hasn't changed
-        self.bool_exploration_ready = True  # (bool) ready for exploration phase
+        self.prev_phase = 'low_density'  # Previous phase
         self.phase='detail'  # Current phase
 
     def set_kappa_detail(self, kappa):
@@ -106,12 +115,15 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         # Use the default trust calculation if trusts are zero
         trust = self.kernel_mult*self.bma.kernel_range
-        self.trust_detail = trust
-        self.trust_explore = trust
-        self.trust_low_density = trust
+        trust_explore = self.kernel_mult_explore*self.bma.kernel_range
+        #trust = self.init_kernel_range
+        #trust_explore = self.init_kernel_range*self.kernel_mult_explore
+        self.trust_detail = np.max([trust, self.min_trust])
+        self.trust_explore = np.max([trust_explore, self.min_trust])
+        self.trust_low_density = np.max([trust_explore, self.min_trust])
         
         # Set the near threshold 
-        self.near_thresh = self.trust_detail/4.0
+        self.near_thresh = self.trust_detail*self.thresh_factor
 
         # Locate current location of the minimum
         if self.verbose:
@@ -143,12 +155,6 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         dist_x_min = scipy.linalg.norm(self.x_min_hist[:,-1]-self.x_min_hist[:,-2])
         diff_min = self.min_hist[-1]-self.min_hist[-2]
 
-        if self.verbose:
-            print("BayesianOracle>> minimum estimate summary:")
-            print("BayesianOracle>> distance from previous minimum location: %.5f" % dist_x_min)
-            print("BayesianOracle>> change in minimum value from previous iteration %.5f" % diff_min)
-            print("")
-
         # If close enough, then increment num near
         if dist_x_min < self.near_thresh:
             num_near += 1
@@ -156,20 +162,36 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             # Reset run otherwise
             self.run_count = 0
             num_near = 0
-            self.bool_exploration_ready = True
+
+        if self.verbose:
+            print("BayesianOracle>> minimum estimate summary:")
+            print("BayesianOracle>> distance from previous minimum location: %.5f" % dist_x_min)
+            print("BayesianOracle>> change in minimum value from previous iteration %.5f" % diff_min)
+            print("BayesianOracle>> number of iterations with small steps relative to kernel width: " + str(num_near))
+            print("")
+
 
         if num_near < self.num_near_thresh:
             self.phase = 'detail'
-        elif self.bool_exploration_ready:
+        elif self.prev_phase == 'detail':
             self.phase = 'exploration'
-            self.bool_exploration_ready = False
-        else:
+        elif self.prev_phase == 'exploration':
             self.phase = 'low_density'
-            self.bool_exploration_ready = True
+        else:
+            self.phase = 'detail'
 
+        """
+        if self.prev_phase == 'detail':
+            self.phase = 'exploration'
+        elif self.prev_phase == 'exploration':
+            self.phase = 'low_density'
+        else:
+            self.phase = 'detail'
+        """
         self.iteration += 1
         self.prev_num_near = num_near
         self.run_count += 1
+        self.prev_phase = self.phase
 
         if self.phase == 'detail':
             if self.verbose:
