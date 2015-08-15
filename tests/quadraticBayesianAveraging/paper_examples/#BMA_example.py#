@@ -16,7 +16,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
     import matplotlib.pyplot as plt
     from matplotlib.collections import LineCollection
     from matplotlib import colors as cl
-    from matplotlib import gridspec
+    from matplotlib import gridspec, ticker
 
     # Get the bma
     bma = bmap.bma
@@ -30,12 +30,16 @@ def plot(bmap, X, k_fig, x_next, kappa):
     y_min = -200
     y_max = 200
 
+    colorcycle = ['r', 'b', 'g', 'm', 'y']
+
     # Plot for 1d
     num_points = 200
     # mini plot dx param
     dx = 0.5
     # miniplot num points
     mini_num_points = 50
+    
+    dpi = 300
     
     # Create x array to be plotted
     x_plot = np.linspace(x_min, x_max, num_points)
@@ -66,11 +70,6 @@ def plot(bmap, X, k_fig, x_next, kappa):
         plt.setp(func_line, color="black", linewidth=2.0, alpha=0.5)
 
     def plt_data(ax, X):
-        # Plot prediction, and plot function
-        pred_line = ax.plot(x_plot, Z)
-        # Set line properties
-        plt.setp(pred_line, color="blue", linewidth=2.0, alpha=0.5)
-
         # Scatter of observations models (sampled models)
         for i in range(nModels):
             f = bma.quadratic_models[i].get_y()
@@ -85,7 +84,14 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
         # Plot next point
         Z_next_rolled = bma.predict(np.array([x_next]))
-        ax.scatter(x_next,Z_next_rolled[0,:]+(y_max-y_min)/80., s=100.0, c="red",marker='v')
+        #ax.scatter(x_next,Z_next_rolled[0,:]+(y_max-y_min)/80., s=100.0, c="red",marker='v')
+
+    def plt_mean(ax):
+        # Plot prediction, and plot function
+        pred_line = ax.plot(x_plot, Z)
+        # Set line properties
+        plt.setp(pred_line, color="blue", linewidth=2.0, alpha=0.5)
+
 
     def plt_confidence(ax):
         # Plot confidence bars for the two types of errors
@@ -102,15 +108,20 @@ def plot(bmap, X, k_fig, x_next, kappa):
         # Plot minature cuvature plots for each model
         dx_mini_plot = np.linspace(-dx, dx, mini_num_points)
         dx_mini_grid = np.array([dx_mini_plot])
+
+        # For the plotting, we will use the current colorcycle
+        ax.set_color_cycle(colorcycle)
+
         for i in range(nModels):
-            model_predictions = bma.model_predictions(dx_mini_grid+X[0,i])
-            line = ax.plot(dx_mini_plot+X[0,i], model_predictions[i,:])
+            model_predictions = bma.model_predictions(x_grid)
+            line = ax.plot(x_plot, model_predictions[i,:])
+
             # Set line properties for miniplot
-            plt.setp(line, color="green", linewidth=3.0, alpha=0.5, linestyle='--',
+            plt.setp(line, linewidth=3.0, alpha=0.5, linestyle='-',
                      dash_capstyle='round')
 
     ### Plot 1
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(dpi=dpi)
 
     plt_func(ax)
     plt_data(ax, X)
@@ -119,45 +130,48 @@ def plot(bmap, X, k_fig, x_next, kappa):
     # Plot range
     plt.ylim([y_min, y_max])
     plt.xlim([x_min, x_max])
-    plt.savefig("figures/"+str(k_fig)+"_func_obs_.png")
+    plt.savefig("figures/"+str(k_fig)+"_func_obs_.png", dpi=dpi)
 
     ### Plot 2
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(dpi=dpi)
 
     plt_func(ax)
     plt_data(ax, X)
+    plt_mean(ax)
     plt_confidence(ax)
 
     # Plot range
     plt.ylim([y_min, y_max])
     plt.xlim([x_min, x_max])
-    plt.savefig("figures/"+str(k_fig)+"_bma_conf_.png")
+    plt.savefig("figures/"+str(k_fig)+"_bma_conf_.png", dpi=dpi)
 
     ### Plot 3
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(dpi=dpi)
 
     plt_func(ax)
     plt_data(ax, X)
+    plt_mean(ax)
     plt_acquisition(ax)
 
     # Plot range
     plt.ylim([y_min, y_max])
     plt.xlim([x_min, x_max])
-    plt.savefig("figures/"+str(k_fig)+"_bma_acq_.png")
+    plt.savefig("figures/"+str(k_fig)+"_bma_acq_.png", dpi=dpi)
 
-    ### Plot 2
-    n_subplot = 4
-    fig2 = plt.figure(figsize=(8, 8))
-    gs = gridspec.GridSpec(4, 1, height_ratios=[3, 1, 1, 1])
+    ### Informative Plot
+    n_subplot = 5
+    fig2 = plt.figure(figsize=(8, 8), dpi=dpi)
+    gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 1, 1, 1, 1])
     
     # Create axis array
     ax = []
     for i in range(n_subplot):
         ax.append(plt.subplot(gs[i]))
-    #fig, ax = plt.subplots(4, sharex=True)
+
 
     # Show the model priors
     log_model_priors = bma.estimate_log_model_priors(x_grid)
+    ax[1]._get_lines.set_color_cycle(colorcycle)
     for i in range(nModels):
         p1_line = ax[1].plot(x_plot, np.exp(log_model_priors[i,:]))
         plt.setp(p1_line, linewidth=3.0, alpha=1.0, linestyle='-',
@@ -168,18 +182,21 @@ def plot(bmap, X, k_fig, x_next, kappa):
     ax[1].set_ylabel('prior', fontsize=16)
 
     # Plot marginal likelihood proportionalities
+    ax[2]._get_lines.set_color_cycle(colorcycle)
     for i in range(nModels):
-        p2_line = ax[2].plot(x_plot, marginal_likelihoods[i,:])
+        p2_line = ax[2].plot(x_plot, np.log(marginal_likelihoods[i,:]))
         plt.setp(p2_line, linewidth=3.0, alpha=1.0, linestyle='-',
                  dash_capstyle='round')
 
-    ax[2].set_ylim([0.000001, 1])
-    ax[2].set_yscale('log')
+    #ax[2].set_ylim([0.00000001, 1])
+    ax[2].set_ylim(-25,0)
+    #ax[2].set_yscale('log')
     ax[2].set_xlim([x_min, x_max])
-    ax[2].set_ylabel('L(k|D,x)', fontsize=16)
+    ax[2].set_ylabel('ll', fontsize=16)
         
     # Show the model weights
     model_weights = bma.estimate_model_weights(x_grid)
+    ax[3]._get_lines.set_color_cycle(colorcycle)
     for i in range(nModels):
         p3_line = ax[3].plot(x_plot, model_weights[i,:])
         plt.setp(p3_line, linewidth=3.0, alpha=1.0, linestyle='-',
@@ -189,10 +206,32 @@ def plot(bmap, X, k_fig, x_next, kappa):
     ax[3].set_xlim([x_min, x_max])
     ax[3].set_ylabel('posterior', fontsize=16)
 
+    # Show the kernel weights
+    kernel_weights = bma.calc_kernel_weights(x_grid)
+    # N_eff
+    N_eff = np.sum(kernel_weights, 0)
+    #N_eff_line = ax[4].plot(x_plot, N_eff)
+    #plt.setp(N_eff_line, linewidth = 3.0, alpha=1.0, linestyle='-',
+    #         color='black')
+
+    # Shade in the makeup of N_eff
+    cumulant = N_eff*0.0
+
+    for i in range(nModels):
+        color = colorcycle[i]
+        ax[4].fill_between(x_plot,cumulant,cumulant+kernel_weights[i,:], facecolor=color, interpolate=True, alpha=0.35)
+        cumulant += kernel_weights[i,:]
+    # Plot range
+    ax[4].set_ylim([0, nModels])
+    ax[4].set_xlim([x_min, x_max])
+    ax[4].set_ylabel('N_eff', fontsize=16)
+
+
     ### Plot alpha weighted by posterior cuvature plots for each model
     model_predictions = bma.model_predictions(x_grid)
 
     # For the plotting, we will use the current colorcycle
+    ax[0]._get_lines.set_color_cycle(colorcycle)
     color_cycle = ax[0]._get_lines.color_cycle
 
     for i in range(nModels):
@@ -247,7 +286,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
         # Set line properties. 
         # Dashed line
-        lc.set_dashes('--')
+        lc.set_dashes('-')
         # line width 3.0
         lc.set_linewidth(3.0)
             
@@ -276,7 +315,10 @@ def plot(bmap, X, k_fig, x_next, kappa):
     ax[0].set_xlim(x_min, x_max)
     ax[0].set_ylim(y_min, y_max)
 
-    plt.savefig("figures/"+str(k_fig)+"_bma_model_breakdown.png")
+    # set x axis
+    ax[4].set_xlabel("x",fontsize=16)
+
+    plt.savefig("figures/"+str(k_fig)+"_bma_model_breakdown.png", dpi=dpi)
 
     fig3, ax = plt.subplots(2, sharex=True)
     
@@ -290,42 +332,39 @@ def plot(bmap, X, k_fig, x_next, kappa):
         
     # Set log scale
     ax[1].set_yscale('log')
-    plt.savefig("figures/"+str(k_fig)+"_bma_error_breakdown.png")
+    plt.savefig("figures/"+str(k_fig)+"_bma_error_breakdown.png", dpi=dpi)
     
-    """
+    
     ### Likelihood plots
-    fig4, ax = plt.subplots(3, sharex=True)
+    fig4, ax = plt.subplots(2, sharex=True)
     kernel_grid = np.logspace(-4.0, 1, num=50)
 
     # Get the likelihoods 
     unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False, skew=False) for kernel_range in kernel_grid])
-    skewness = np.array([bma.estimate_skewness(kernel_range) for kernel_range in kernel_grid])
     reg_loglikelihood = np.array([bma.loglikelihood(kernel_range) for kernel_range in kernel_grid])
 
     # Plot the two terms
-    ll1 = ax[0].plot(kernel_grid, unreg_loglikelihood)
+    ll0 = ax[0].plot(kernel_grid, unreg_loglikelihood)
     ax[0].set_xscale('log')
-    ll2 = ax[1].plot(kernel_grid, skewness)
+    ll1 = ax[1].plot(kernel_grid, reg_loglikelihood)
     ax[1].set_xscale('log')
-    ll3 = ax[2].plot(kernel_grid, reg_loglikelihood)
-    ax[2].set_xscale('log')
 
+    plt.setp(ll0, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
+             dash_capstyle='round')
     plt.setp(ll1, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
              dash_capstyle='round')
-    plt.setp(ll2, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
-             dash_capstyle='round')
-    plt.setp(ll3, color="red", linewidth=3.0, alpha=0.5, linestyle='-',
-             dash_capstyle='round')
 
-    ax[2].set_xlabel("kernel range",fontsize=16)
+    ax[1].set_xlabel("kernel range",fontsize=16)
 
-    plt.savefig("figures/"+str(k_fig)+"_bma_loglikelihood.png")
+    plt.savefig("figures/"+str(k_fig)+"_bma_loglikelihood.png", dpi=dpi)
+
     """
     ### Likelihood plots
-    fig4, ax = plt.subplots()
+    fig4, ax = plt.subplots(2)
     kernel_grid = np.logspace(-4.0, 1.0, num=50)
 
-    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range) for kernel_range in kernel_grid])
+    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False) for kernel_range in kernel_grid])
+    unreg_loglikelihood = np.array([bma.loglikelihood(kernel_range, regularization=False) for kernel_range in kernel_grid])
 
     # Plot the two terms
     ll1 = ax.plot(kernel_grid, unreg_loglikelihood)
@@ -333,11 +372,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
 
 
     plt.savefig("figures/"+str(k_fig)+"_bma_loglikelihood.png")
-
-
-# Create enriched process
-ebma = bo.process_objects.EnrichedQuadraticBMAProcess(ndim = 1)
-
+    """
 # Create the function
 
 def fun(x):
@@ -367,40 +402,41 @@ def fun_all(x,r1=0.0, r2=0.0, r3=0.0, bool_zero=False):
         grad = grad*0.0
     return f, grad, Hess
 
-bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1)
+# Create optimizer object
+bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1, precision_beta=100.0)
 
-# Initialize x_next
-x_next = np.array([3.0])
-
-X_next = np.array([[0.0,0.5,2.5]])
+# Create the points for function evaluation
+X_next = np.array([[0.0,0.5,2.5,1.5,0.4]])
 X = None
 
-for k in range(X_next.shape[1]):
-    # Get next
+# Error  values
+errors = [(30.0, np.array([10.0]), np.array([[50.0]])),
+          (-10.0, np.array([-30.0]), np.array([[-20.0]])),
+          (20.0, np.array([-10.0]), np.array([[100.0]])),
+          (5.0, np.array([20.0]), np.array([[10.0]])),
+          (3.0, np.array([-4.0]), np.array([[-30.0]]))]
+
+for k in xrange(X_next.shape[1]):
     x_next = X_next[:,k]
     x = x_next
     if k == 0:
         X = np.array([x_next])
     else:
         X = np.hstack([X, np.array([x_next])])
-    
-    # Make up errors
-    r1 = (20.0+20*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r2 = (40.0+40*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-    r3 = (60.0+60*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
-
-#    r1 = 0.0
-#    r2 = 0.0
-#    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
-    f, grad, Hess = fun_all(x, r1, r2, r3)
-    
+    f, grad, Hess = fun_all(x, 0.0, 0.0, 0.0)
+
+    # Add errors
+    f += errors[k][0]
+    grad += errors[k][1]
+    Hess += errors[k][2]
+
     bmao.add_observation(x, f, grad, Hess)
     
     kappa = bmao.kappa_detail
+    bmao.set_kernel_range(2.0)
 
     # Plot result
     plot(bmao, X, k, x_next, kappa)
 
-    bmao.bma.predict_bayesian(X)

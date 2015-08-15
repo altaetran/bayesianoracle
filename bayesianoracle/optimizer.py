@@ -16,7 +16,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  kernel_mult=1.0,
                  kernel_mult_explore=2.0,
                  min_trust=0.01,
-                 precision_alpha=1.0,
+                 precision_alpha=2.0,
                  precision_beta=10.0,
                  verbose=True):
         """

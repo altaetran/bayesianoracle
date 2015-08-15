@@ -34,6 +34,9 @@ class LogNormalPrior(object):
     def get_mode(self):
         return np.exp(self.mean-self.sigma**2)
 
+    def get_scale(self):
+        return self.scale
+
     def rvs(self, size=None):
         return scipy.stats.lognorm.rvs(self.sigma, loc=0, scale=np.exp(self.mean),
                                        size=size)
@@ -74,6 +77,9 @@ class ExponentialPrior(object):
         return scipy.stats.expon.rvs(scale=self.scale,
                                      size=size)
 
+    def get_scale(self):
+        return self.scale
+
     def logpdf(self, x):
         return scipy.stats.expon.logpdf(x, scale=self.scale)
 
@@ -101,6 +107,12 @@ class GammaPrior(object):
 
     def get_mode(self):
         return (self.a-1.0) * self.scale
+
+    def get_beta(self):
+        return 1.0 / self.scale
+
+    def get_alpha(self):
+        return self.a
 
     def rvs(self, size=None):
         return scipy.stats.gamma.rvs(self.a, scale = self.scale,
@@ -132,6 +144,9 @@ class InvGammaPrior(object):
 
     def get_mode(self):
         return self.scale / (self.a + 1)
+
+    def get_scale(self):
+        return self.scale
 
     def rvs(self, size=None):
         return scipy.stats.invgamma.rvs(self.a, scale = self.scale,
