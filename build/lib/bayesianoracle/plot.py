@@ -12,7 +12,7 @@ class Plotter1D(object):
                  x_range=[-2.0, 2.0],
                  y_range=[-10.0, 10.0],
                  num_points=200,
-                 global_linewidth=3.0,
+                 global_linewidth=4.0,
                  colorcycle=['r', 'b', 'g', 'm', 'y', 'c']):
         self.x_min = x_range[0]
         self.x_max = x_range[1]
@@ -97,13 +97,13 @@ class Plotter1D(object):
         if kernel_range == -1.0:
             # Use built in kernel range
             Z_rolled = self.bma.predict_with_unc(self.x_grid)
-            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(x_grid, return_likelihoods=True)
-            kernel_weights = self.bma.calc_kernel_weights(x_grid)
+            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True)
+            kernel_weights = self.bma.calc_kernel_weights(self.x_grid)
         else:
             # Otherwiuse use given kernel range
             Z_rolled = self.bma.predict_with_unc(self.x_grid, kernel_range=kernel_range)
-            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(x_grid, return_likelihoods=True, kernel_range=kernel_range)
-            kernel_weights = self.bma.calc_kernel_weights(x_grid, kernel_range=kernel_range)
+            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True, kernel_range=kernel_range)
+            kernel_weights = self.bma.calc_kernel_weights(self.x_grid, kernel_range=kernel_range)
 
         # Unroll and save
         self.pointwise_means = Z_rolled[:,0]
@@ -170,13 +170,14 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
         
-    def plot_bayesian_likelihoods(self, ax, xlabel='x', ylabel='log kernel range', nLevels=20):
+    def plot_bayesian_likelihoods(self, ax, xlabel='x', ylabel='kernel range', nLevels=20):
         # Set current plt axis to ax
         plt.sca(ax)
 
         # Plot the countour
         heatmap = ax.contourf(self.x_plot, self.bayesian_kernel_ranges, self.bayesian_likelihoods, nLevels, cmap=plt.cm.bone)
-        
+        ax.set_yscale('log')
+
         # Set the labels
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -187,6 +188,7 @@ class Plotter1D(object):
 
         # Set range
         plt.xlim([self.x_min, self.x_max])
+        #plt.ylim([self.bayesian_kernel_ranges.min, self.bayesian_kernel_ranges.max])
         
     def plot_bayesian_avg_kernel_ranges(self, ax, xlabel='x', ylabel='avg kernel range', alpha=1.0, linestyle='-'):
         # Set current plt axis to ax
@@ -196,10 +198,9 @@ class Plotter1D(object):
         ax._get_lines.set_color_cycle(self.colorcycle)
 
         # Plot model priors
-        for i in xrange(self.nModels):
-            p_line = ax.plot(self.x_plot, self.bayesian_avg_kernel_ranges)
-            plt.setp(p_line, color='black', linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
-                     dash_capstyle='round')
+        p_line = ax.plot(self.x_plot, self.bayesian_avg_kernel_ranges)
+        plt.setp(p_line, color='black', linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
+                 dash_capstyle='round')
 
         # Plot range
         plt.xlim([self.x_min, self.x_max])
@@ -247,7 +248,7 @@ class Plotter1D(object):
                      dash_capstyle='round')
 
         # Plot range
-        plt.xlim([self.x_min, self.self.x_max])
+        plt.xlim([self.x_min, self.x_max])
         plt.set_ylim([0, 1])
         ax.set_ylabel(ylabel, fontsize=12)
 
@@ -269,13 +270,13 @@ class Plotter1D(object):
 
         # Plot model priors
         for i in xrange(self.nModels):
-            p_line = ax.plot(self.x_plot, model_posteriors)
+            p_line = ax.plot(self.x_plot, model_posteriors[i,:])
             plt.setp(p_line, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                      dash_capstyle='round')
 
         # Plot range
-        plt.xlim([self.x_min, self.self.x_max])
-        plt.set_ylim([0, 1])
+        plt.xlim([self.x_min, self.x_max])
+        plt.ylim([0, 1])
         ax.set_ylabel(ylabel, fontsize=12)
 
     def plot_marginal_likelihoods(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', ylabel='ML'):
@@ -298,7 +299,7 @@ class Plotter1D(object):
 
 
         #ax[2].set_yscale('log')
-        plt.set_xlim([self.x_min, self.x_max])
+        plt.xlim([self.x_min, self.x_max])
         ax.set_ylabel(ylabel, fontsize=12)
 
     def plot_kernel_weights(self, ax, bool_bayesian=False, alpha=0.35, ylabel='N_eff'):
@@ -316,17 +317,19 @@ class Plotter1D(object):
         cumulant = N_eff*0.0
 
         for i in range(self.nModels):
-            color = colorcycle[i]
+            color = self.colorcycle[i]
             ax.fill_between(self.x_plot, cumulant, cumulant+kernel_weights[i,:], facecolor=color, interpolate=True, alpha=alpha)
             # Add to the cumulant
             cumulant += kernel_weights[i,:]
 
         # Plot range
-        plt.set_ylim([0.0, self.nModels])
-        plt.set_xlim([self.x_min, self.x_max])
+        plt.ylim([0.0, self.nModels])
+        plt.xlim([self.x_min, self.x_max])
         ax.set_ylabel(ylabel, fontsize=12)
 
-    def plot_visually_weighted_models(self, ax, weight_type='posterior', pred_alpha=0.5, pred_linestyle='-', model_linestyle='-', model_alpha=0.7):
+    def plot_visually_weighted_models(self, ax, weight_type='posterior', xlabel='x',
+                                      pred_alpha=0.5, pred_linestyle='-', pred_color='black',
+                                      model_linestyle='-', model_alpha=0.7):
         if weight_type == 'posterior':
             weights = self.pointwise_model_weights
         elif weight_type == 'prior':
@@ -400,11 +403,11 @@ class Plotter1D(object):
 
         # Plot the predictions
         predictions = np.sum(np.multiply(self.model_predictions, weights),axis=0)
-        p_line = plt.plot(self.x_plot, np.log(marginal_likelihoods[i,:]))
-        plt.setp(p_line, linewidth=global_linewidth, alpha=pred_alpha, linestyle=linestyle,
+        p_line = plt.plot(self.x_plot, predictions)
+        plt.setp(p_line, color=pred_color, linewidth=self.global_linewidth, alpha=pred_alpha, linestyle=pred_linestyle,
                  dash_capstyle='round')
 
-
+        ax.set_xlabel(xlabel)
 
 
         

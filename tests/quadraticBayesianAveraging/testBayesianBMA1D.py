@@ -42,6 +42,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
     boplt.plot_data(ax)
     boplt.plot_models(ax)
     plt.savefig("figures/"+str(k_fig)+"_a_obs_.png", dpi=dpi)
+    plt.close(fig)
 
     ### Plot the bayesian quantities 
     fig, ax = plt.subplots()
@@ -52,6 +53,7 @@ def plot(bmap, X, k_fig, x_next, kappa):
     boplt.plot_confidence(ax, bool_bayesian=True)
 
     plt.savefig("figures/"+str(k_fig)+"_b_predictive_.png", dpi=dpi)
+    plt.close(fig)
 
     ### Plot the kernel range likelihoods
     n_subplot = 2
@@ -63,10 +65,40 @@ def plot(bmap, X, k_fig, x_next, kappa):
     for i in range(n_subplot):
         ax.append(plt.subplot(gs[i]))
 
-
     boplt.plot_bayesian_likelihoods(ax[0])
     boplt.plot_bayesian_avg_kernel_ranges(ax[1])
     plt.savefig("figures/"+str(k_fig)+"_c_likelihoods_.png", dpi=dpi)
+    plt.close(fig)
+    ### Plot the decomposition for different kernel ranges
+
+    def plot_decomposition(kernel_range, label):
+        boplt.get_pointwise_bma_evals(kernel_range=kernel_range)
+
+        n_subplot = 4
+        fig = plt.figure(figsize=(8, 8), dpi=dpi)
+        gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 3, 1, 1])
+
+        ax = []
+        for i in range(n_subplot):
+            ax.append(plt.subplot(gs[i]))
+
+        boplt.plot_data(ax[0])
+        boplt.plot_visually_weighted_models(ax[0], 'prior')
+        boplt.plot_data(ax[1])
+        boplt.plot_visually_weighted_models(ax[1], 'posterior')
+        boplt.plot_model_posteriors(ax[2])
+        boplt.plot_kernel_weights(ax[3])
+
+        plt.savefig("figures/"+str(k_fig)+"_d_decomposition_"+label+"_.png", dpi=dpi)
+
+        plt.close(fig)
+
+    plot_decomposition(kernel_range=0.1, label='0010')
+    plot_decomposition(kernel_range=0.5, label='0050')
+    plot_decomposition(kernel_range=1.0, label='0100')
+    plot_decomposition(kernel_range=2.0, label='0200')
+    plot_decomposition(kernel_range=5.0, label='0500')
+
 
 
 # Create enriched process
@@ -101,8 +133,8 @@ def fun_all(x,r1=0.0, r2=0.0, r3=0.0, bool_zero=False):
         grad = grad*0.0
     return f, grad, Hess
 
-bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1, init_kernel_var = 10.0, init_kernel_range=1.0, precision_beta = 100.0,
-                                          kernel_type='triweight')
+bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1, init_kernel_var = 0.1, init_kernel_range=1.0, precision_beta = 10.0,
+                                          kernel_type='Gaussian')
 
 # Initialize x_next
 x_next = np.array([3.0])
@@ -124,9 +156,9 @@ for k in range(X_next.shape[1]):
     r2 = (40.0+40*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
     r3 = (60.0+60*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
 
-    r1 = 0.0
-    r2 = 0.0
-    r3 = 0.0
+#    r1 = 0.0
+#    r2 = 0.0
+#    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
     f, grad, Hess = fun_all(x, r1, r2, r3)
@@ -134,8 +166,6 @@ for k in range(X_next.shape[1]):
     bmao.add_observation(x, f, grad, Hess)
     
     kappa = bmao.kappa_detail
-
-    bmao.set_kernel_range(0.1)
 
     # Plot result
     plot(bmao, X, k, x_next, kappa)
