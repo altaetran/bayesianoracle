@@ -528,13 +528,12 @@ class QuadraticBMAProcess(object):
 
     def __init_quadrature_samples(self):
         ### Only works for gamma prior on the kernel range
-        n_int = 200  # Number of roots for laguerre
+        n_int = 50  # Number of roots for laguerre
         min_weight = 1.0e-15
         # Get the kernel ranges from generalized lageurre 
         # First get beta parma
         beta = self.kernel_prior.get_beta()
         alpha = self.kernel_prior.get_alpha()
-        
         
         roots, weights = scipy.special.la_roots(n_int, alpha-1)
 
@@ -547,9 +546,17 @@ class QuadraticBMAProcess(object):
         roots = np.delete(roots, ind_rem)
         weights = np.delete(weights, ind_rem)
 
-
         self.roots = roots
         self.weights = weights
+    
+        kernel_ranges = self.roots / beta
+
+        if self.verbose:
+            min_kernel_range = np.min(kernel_ranges)
+            max_kernel_range = np.max(kernel_ranges)
+            print("BayesianOracle>> Minimum kernel range considered: "+str(min_kernel_range))
+            print("BayesianOracle>> Maximum kernel range considered: "+str(max_kernel_range))
+            print("BayesianOracle>> Number of kernel ranges considered: "+str(len(weights)))
 
         """
         self.roots = np.linspace(0.01, 10, 50) * beta
@@ -593,7 +600,7 @@ class QuadraticBMAProcess(object):
         kernel_range : (scalar) desired kernnel_range.
         """
         self.kernel_range = kernel_range
-        if len(self.quadratic_models) > 0:
+        if self.get_n_models() > 0:
             self.generate_renorm_factors()
 
     def set_kernel_prior(self, kernel_prior):
@@ -640,6 +647,9 @@ class QuadraticBMAProcess(object):
         """
         return np.hstack([qm.get_y() for qm in self.quadratic_models])
 
+    def get_n_models(self):
+        return len(self.quadratic_models)
+
     def generate_lambda_samples(self):
         """ 
         Generates and stores the lambda samples for estimating the 
@@ -647,7 +657,7 @@ class QuadraticBMAProcess(object):
         with each column corresponding to one sample        
         """
         n_samples = self.n_samples
-        n_models = len(self.quadratic_models)
+        n_models = self.get_n_models()
 
         self.lambda_samples = []  # Reset samples
 
@@ -720,7 +730,7 @@ class QuadraticBMAProcess(object):
 
         """
         p = X.shape[1]
-        n_models = len(self.quadratic_models)
+        n_models = self.get_n_models()
         distances_sq = self.__get_model_distances(X)  # Model distances
         
         # Keep track of the sum of the model priors across the lambda samples
@@ -785,7 +795,7 @@ class QuadraticBMAProcess(object):
             # Calculate the relevence weights for each model, and then stack them vertically
             kernel_weights = [self.kernel_func(np.linalg.norm(X-self.quadratic_models[i].get_a()[:,None], axis=0),
                                                kernel_range*renorm[i])
-                              for i in xrange(len(self.quadratic_models))]
+                              for i in xrange(self.get_n_models())]
             kernel_weights = np.vstack(kernel_weights)  # Reformat
             kernel_weights / np.sum(np.power(1/renorm,self.ndim))
         return kernel_weights
@@ -831,7 +841,7 @@ class QuadraticBMAProcess(object):
         if not self.bool_variable_kernel:
             return
         
-        n_models = len(self.quadratic_models)
+        n_models = self.get_n_models()
         X_obs = self.get_X_stack()
         init_kernel_weights = self.calc_kernel_weights(X_obs, self.kernel_range)
         # Get kernel sums 
@@ -896,7 +906,7 @@ class QuadraticBMAProcess(object):
         (optional) (1 x p) matrix of the likelihoods of the bayesian
         model averaging process at the p locations
         """
-        n_models = len(self.quadratic_models)
+        n_models = self.get_n_models()
         p = X.shape[1]  # Number of positions to check
 
         # Get the relevence weights (nModels x p)
@@ -1302,7 +1312,7 @@ class QuadraticBMAProcess(object):
         predictions = self.predict_with_unc(self.get_X_stack())
         y = self.get_y_stack()
 
-        sample_size = len(self.quadratic_models)
+        sample_size = self.get_n_models()
         
         # Get the true variance of the points
         var = np.square(predictions[1, :]) + np.square(predictions[2, :])
@@ -1544,7 +1554,7 @@ class EnrichedQuadraticBMAProcess(object):
 
         self.set_kernel_range(init_kernel_range)  # Set init kernel_range
         
-    def set_gamma_kernel_prior(self, mode, var):
+    def set_gamma_kernel_prior_mode(self, mode, var):
         """ 
         Sets the kernel prior to a gamma function with mode, mode,
         and variance, var. Notice that the mode is used as apposed to
@@ -1558,6 +1568,22 @@ class EnrichedQuadraticBMAProcess(object):
         """
         kernel_prior = priors.GammaPrior()  # Create default GammaPrior
         kernel_prior.set_mode_var(mode, var)  # Set Gamma params using mode and var
+        self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
+
+    def set_gamma_kernel_prior(self, mean, var):
+        """ 
+        Sets the kernel prior to a gamma function with mode, mode,
+        and variance, var. Notice that the mode is used as apposed to
+        mean or median, because in the absence of data, the MAP estimate
+        will just be the mode.
+
+        args:
+        -----
+        mode : (scalar) mode value of the gamma distribution to be used
+        var  : (scalar) variance value of the gamma distribution to be used
+        """
+        kernel_prior = priors.GammaPrior()  # Create default GammaPrior
+        kernel_prior.set_mean_var(mean, var)  # Set Gamma params using MEAN and var
         self.bma.set_kernel_prior(kernel_prior)  # Set bma's kernel prior
 
     def set_invgamma_kernel_prior(self, mode, var):
@@ -1632,7 +1658,7 @@ class EnrichedQuadraticBMAProcess(object):
         --------
         (scalar) number of models in the Bayesian model averaging process
         """
-        return len(self.bma.quadratic_models)
+        return self.bma.get_n_models()
 
     def get_X_stack(self):
         """
@@ -1673,6 +1699,12 @@ class EnrichedQuadraticBMAProcess(object):
         """
         return self.bma.predict_with_unc(X)
 
+    def predict_bayesian(self, X):
+        """
+        Full Bayesian prediction, integrating over the kernel range
+        """
+        return self.bma.predict_bayesian(X)
+
     def set_kernel_range(self, kernel_range):
         """
         Setter for the kernel range
@@ -1700,6 +1732,9 @@ class EnrichedQuadraticBMAProcess(object):
         model_weights, errors, N_eff = self.bma.estimate_model_weights(X, return_errors=True, kernel_range=self.kernel_range)
         return N_eff
 
+    def calculate_N_eff_bayesian(self, X):
+        return self.bma.predict_bayesian(X)[3,:]
+
     def calculate_discounted_mean(self, X, kappa=0.1):
         """ 
         Calculates the discounted_mean = mean - kappa * unexplained_std
@@ -1711,7 +1746,7 @@ class EnrichedQuadraticBMAProcess(object):
         kappa : (scalar) std multiplier used in the discounted means calculation
         """
         # Get the predictions
-        predictions = self.bma.predict(X)
+        predictions = self.bma.predict_bayesian(X)
         # Get means and unexplained standard deviation
         means = predictions[0, :]
         unexp_std = predictions[1, :]
@@ -1757,6 +1792,7 @@ class EnrichedQuadraticBMAProcess(object):
         """
         Optimizes the kernel hyperparameter using MAP estimation
         """
+        """
         if self.verbose:
             misc.tic()
             print("BayesianOracle>> optimizing hyperparameters")
@@ -1765,3 +1801,4 @@ class EnrichedQuadraticBMAProcess(object):
         if self.verbose:
             print("BayesianOracle>> hyperparameter optimization finished in %.1f seconds" % misc.toc())
             print("")
+        """

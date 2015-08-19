@@ -1,11 +1,10 @@
 import numpy as np
 import scipy
-import matplotlib as plt
-
 import matplotlib.pyplot as plt
+
 from matplotlib.collections import LineCollection
 from matplotlib import colors as cl
-from matplotlib import gridspec
+from matplotlib import gridspec, markers
 
 class Plotter1D(object):
     def __init__(self,
@@ -25,7 +24,7 @@ class Plotter1D(object):
         self.x_grid = np.array([self.x_plot])
 
         self.bma = None
-        self.nModels = 0
+        self.n_models = 0
 
         # Plotting options
         self.global_linewidth = global_linewidth
@@ -34,7 +33,7 @@ class Plotter1D(object):
     def set_bma(self, bma):
         self.bma = bma
         self.model_predictions = bma.model_predictions(self.x_grid)
-        self.nModels = len(bma.quadratic_models)
+        self.n_models = len(bma.quadratic_models)
 
     def plot_fun(self, ax, fun, alpha=0.7, linestyle='--'):
         """ Plots the function, fun, along the x range 
@@ -54,7 +53,7 @@ class Plotter1D(object):
             F[i] = fun(np.array([self.x_plot[i]]))
 
         # Plot function
-        func_line = ax.plot(self.x_plot, F)
+        func_line, = ax.plot(self.x_plot, F)
         # Set line properties 
         plt.setp(func_line, color='black', linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                  dash_capstyle='round')
@@ -63,15 +62,17 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
+        return func_line
+
     def plot_data(self, ax, alpha=0.5):
         # Set current plt axis to ax
         plt.sca(ax)
 
         # Scatter of observations models (sampled models)
-        for i in range(self.nModels):
+        for i in range(self.n_models):
             a = self.bma.quadratic_models[i].get_a()
             f = self.bma.quadratic_models[i].get_y()
-            ax.scatter(a, f, s=100.0, c="black", alpha=alpha)
+            ax.scatter(a, f, s=100.0, c="black", alpha=alpha, zorder=3)
 
         # Set range
         plt.ylim([self.y_min, self.y_max])
@@ -124,7 +125,7 @@ class Plotter1D(object):
         # Get log_model_priors
         self.pointwise_log_model_priors = self.bma.estimate_log_model_priors(self.x_grid)
 
-    def plot_means(self, ax, bool_bayesian=True, alpha=0.7):
+    def plot_means(self, ax, bool_bayesian=True, alpha=0.7, xlabel='x'):
         if bool_bayesian:
             means = self.bayesian_means
         else:
@@ -133,7 +134,7 @@ class Plotter1D(object):
         # Set current plt axis to ax
         plt.sca(ax)
             
-        func_line = ax.plot(self.x_plot, means)
+        func_line, = ax.plot(self.x_plot, means)
         # Set line properties 
         plt.setp(func_line, color="black", linewidth=self.global_linewidth, alpha=alpha)
 
@@ -141,7 +142,35 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
-    def plot_confidence(self, ax, bool_bayesian=True):
+        ax.set_xlabel(xlabel, fontsize=12)
+
+        return func_line
+
+    def plot_discounted_means(self, ax, kappa, bool_bayesian=True, linestyle='--', alpha=0.9, color='magenta', xlabel='x'):
+        if bool_bayesian:
+            means = self.bayesian_means
+            std = self.bayesian_unexp_std
+        else:
+            means = self.pointwise_means
+            std = self.pointwise_unexp_std
+
+        # Set current plt axis to ax
+        plt.sca(ax)
+            
+        func_line, = ax.plot(self.x_plot, means - kappa*std)
+        # Set line properties 
+        plt.setp(func_line, color=color, linewidth=self.global_linewidth, linestyle=linestyle, alpha=alpha,
+                 dash_capstyle='round')
+
+        # Set range
+        plt.ylim([self.y_min, self.y_max])
+        plt.xlim([self.x_min, self.x_max])
+
+        ax.set_xlabel(xlabel, fontsize=12)
+
+        return func_line
+
+    def plot_confidence(self, ax, bool_bayesian=True, xlabel='x', exp_color='blue', unexp_color='red', std_color='black'):
         if bool_bayesian:
             means = self.bayesian_means
             unexp_std = self.bayesian_unexp_std
@@ -157,26 +186,51 @@ class Plotter1D(object):
         plt.sca(ax)
 
         # Plot confidence bars for the two types of errors
-        ax.fill_between(self.x_plot,means-exp_std, means+exp_std, facecolor='blue', interpolate=True, alpha=0.3)
-        ax.fill_between(self.x_plot,means-unexp_std, means+unexp_std, facecolor='red', interpolate=True, alpha=0.3)
+        exp_line = ax.fill_between(self.x_plot,means-exp_std, means+exp_std, facecolor=exp_color, interpolate=True, alpha=0.3)
+        unexp_line = ax.fill_between(self.x_plot,means-unexp_std, means+unexp_std, facecolor=unexp_color, interpolate=True, alpha=0.3)
 
         # Full std bars
         upper_min = np.max(np.vstack([means+exp_std, means+unexp_std]), axis=0)
         lower_min = np.min(np.vstack([means-exp_std, means-unexp_std]), axis=0)
-        ax.fill_between(self.x_plot, upper_min, means+std, facecolor='black', interpolate=True, alpha=0.15)
-        ax.fill_between(self.x_plot, means-std, lower_min, facecolor='black', interpolate=True, alpha=0.15)
+        std_line1 = ax.fill_between(self.x_plot, upper_min, means+std, facecolor=std_color, interpolate=True, alpha=0.15)
+        std_line2 =ax.fill_between(self.x_plot, means-std, lower_min, facecolor=std_color, interpolate=True, alpha=0.15)
 
         # Set range
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
+
+        ax.set_xlabel(xlabel, fontsize=12)
+
+        # Create items for use as legend
+        exp_fill = plt.Rectangle((0, 0), 1, 1, fc=exp_color)
+        unexp_fill = plt.Rectangle((0, 0), 1, 1, fc=unexp_color)
+        std_fill = plt.Rectangle((0, 0), 1, 1, fc=std_color)
+
+        return exp_fill, unexp_fill, std_fill
         
-    def plot_bayesian_likelihoods(self, ax, xlabel='x', ylabel='kernel range', nLevels=20):
+    def plot_bayesian_likelihoods(self, ax, xlabel='x', ylabel='kernel range', nLevels=20, kernel_ranges_range=[1.0e-2,1.0e2]):
         # Set current plt axis to ax
         plt.sca(ax)
 
+        padded_kernel_ranges = self.bayesian_kernel_ranges
+        padded_likelihoods = self.bayesian_likelihoods
+        # Pad the data to fill the full range
+        if self.bayesian_kernel_ranges.min() > kernel_ranges_range[0]:
+            # Left pad
+            padded_kernel_ranges = np.insert(padded_kernel_ranges, 0, kernel_ranges_range[0])
+            padded_likelihoods = np.insert(padded_likelihoods, 0, 0.0, axis=0)
+        if self.bayesian_kernel_ranges.max() < kernel_ranges_range[1]:
+            # Right pad
+            padded_kernel_ranges = np.append(padded_kernel_ranges, kernel_ranges_range[1])
+            padded_likelihoods = np.insert(padded_likelihoods, -1, 0.0, axis=0)            
+
         # Plot the countour
-        heatmap = ax.contourf(self.x_plot, self.bayesian_kernel_ranges, self.bayesian_likelihoods, nLevels, cmap=plt.cm.bone)
+        heatmap = ax.contourf(self.x_plot, padded_kernel_ranges, padded_likelihoods, nLevels, cmap=plt.cm.bone)
         ax.set_yscale('log')
+
+        # Set range
+        plt.xlim([self.x_min, self.x_max])
+        plt.ylim(kernel_ranges_range)
 
         # Set the labels
         ax.set_xlabel(xlabel)
@@ -186,11 +240,9 @@ class Plotter1D(object):
         cbar = plt.colorbar(heatmap, orientation='horizontal', pad=0.1)
         cbar.ax.set_xlabel('posterior probability')
 
-        # Set range
-        plt.xlim([self.x_min, self.x_max])
         #plt.ylim([self.bayesian_kernel_ranges.min, self.bayesian_kernel_ranges.max])
         
-    def plot_bayesian_avg_kernel_ranges(self, ax, xlabel='x', ylabel='avg kernel range', alpha=1.0, linestyle='-'):
+    def plot_bayesian_avg_kernel_ranges(self, ax, xlabel='x', ylabel='avg kernel range', alpha=1.0, linestyle='-', kernel_ranges_range=[0.0,2.0]):
         # Set current plt axis to ax
         plt.sca(ax)
 
@@ -198,13 +250,41 @@ class Plotter1D(object):
         ax._get_lines.set_color_cycle(self.colorcycle)
 
         # Plot model priors
-        p_line = ax.plot(self.x_plot, self.bayesian_avg_kernel_ranges)
+        p_line, = ax.plot(self.x_plot, self.bayesian_avg_kernel_ranges)
         plt.setp(p_line, color='black', linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                  dash_capstyle='round')
 
         # Plot range
         plt.xlim([self.x_min, self.x_max])
+        plt.ylim(kernel_ranges_range)
+
+        # Set labels
+        ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel(ylabel, fontsize=12)
+
+        return p_line
+
+    def plot_N_eff(self, ax, bool_bayesian=True, alpha=0.7, xlabel='x', ylabel='N_eff'):
+        if bool_bayesian:
+            N_eff = self.bayesian_N_eff
+        else:
+            N_eff = self.pointwise_N_eff
+
+        # Set current plt axis to ax
+        plt.sca(ax)
+            
+        N_eff_line, = ax.plot(self.x_plot, N_eff)
+        # Set line properties 
+        plt.setp(N_eff_line, color="black", linewidth=self.global_linewidth, alpha=alpha)
+
+        # Set range
+        plt.ylim([0.0, np.max(N_eff)])
+        plt.xlim([self.x_min, self.x_max])
+
+        ax.set_xlabel(xlabel, fontsize=12)
+        ax.set_ylabel(ylabel, fontsize=12)
+
+        return N_eff_line
 
     def plot_models(self, ax, alpha=0.7, linestyle='-'):
         # Set current plt axis to ax
@@ -213,17 +293,23 @@ class Plotter1D(object):
         # For the plotting, we will use the current colorcycle
         ax.set_color_cycle(self.colorcycle)
 
-        for i in range(self.nModels):
+        lines = []
+
+        for i in range(self.n_models):
             model_predictions = self.bma.model_predictions(self.x_grid)
-            line = ax.plot(self.x_plot, model_predictions[i,:])
+            line, = ax.plot(self.x_plot, model_predictions[i,:])
 
             # Set line properties for the quadratic line
             plt.setp(line, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                      dash_capstyle='round')
 
+            lines.append(line)
+
         # Set range
         plt.xlim([self.x_min, self.x_max])
         plt.ylim([self.y_min, self.y_max])
+
+        return lines
 
     def plot_model_priors(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', ylabel='prior'):
         """ Not possible for Bayesian yet
@@ -241,16 +327,22 @@ class Plotter1D(object):
         # Set colorcylce
         ax._get_lines.set_color_cycle(self.colorcycle)
 
+        prior_lines = []
+
         # Plot model priors
-        for i in xrange(self.nModels):
-            p_line = ax.plot(self.x_plot, np.exp(log_model_priors[i,:]))
+        for i in xrange(self.n_models):
+            p_line, = ax.plot(self.x_plot, np.exp(log_model_priors[i,:]))
             plt.setp(p_line, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                      dash_capstyle='round')
+
+            prior_lines.append(p_line)
 
         # Plot range
         plt.xlim([self.x_min, self.x_max])
         plt.set_ylim([0, 1])
         ax.set_ylabel(ylabel, fontsize=12)
+
+        return prior_lines
 
     def plot_model_posteriors(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', ylabel='posterior'):
         """ Not possible for Bayesian yet
@@ -268,16 +360,22 @@ class Plotter1D(object):
         # Set colorcylce
         ax._get_lines.set_color_cycle(self.colorcycle)
 
+        posterior_lines = []
+
         # Plot model priors
-        for i in xrange(self.nModels):
-            p_line = ax.plot(self.x_plot, model_posteriors[i,:])
+        for i in xrange(self.n_models):
+            p_line, = ax.plot(self.x_plot, model_posteriors[i,:])
             plt.setp(p_line, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                      dash_capstyle='round')
+            
+            posterior_lines.append(p_line)
 
         # Plot range
         plt.xlim([self.x_min, self.x_max])
         plt.ylim([0, 1])
         ax.set_ylabel(ylabel, fontsize=12)
+
+        return posterior_lines
 
     def plot_marginal_likelihoods(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', ylabel='ML'):
         # Get the model priors
@@ -292,15 +390,21 @@ class Plotter1D(object):
         # Set colorcycle
         ax._get_lines.set_color_cycle(self.colorcycle)
 
-        for i in range(self.nModels):
-            p_line = plt.plot(self.x_plot, np.log(marginal_likelihoods[i,:]))
+        marginal_likelihood_lines = []
+
+        for i in range(self.n_models):
+            p_line, = plt.plot(self.x_plot, np.log(marginal_likelihoods[i,:]))
             plt.setp(p_line, linewidth=global_linewidth, alpha=alpha, linestyle=linestyle,
                      dash_capstyle='round')
+
+            marginal_likelihood_lines.append(p_line)
 
 
         #ax[2].set_yscale('log')
         plt.xlim([self.x_min, self.x_max])
         ax.set_ylabel(ylabel, fontsize=12)
+
+        return marginal_likelihood_lines
 
     def plot_kernel_weights(self, ax, bool_bayesian=False, alpha=0.35, ylabel='N_eff'):
         # Get the model priors
@@ -316,14 +420,14 @@ class Plotter1D(object):
         N_eff = np.sum(kernel_weights, 0)
         cumulant = N_eff*0.0
 
-        for i in range(self.nModels):
+        for i in range(self.n_models):
             color = self.colorcycle[i]
             ax.fill_between(self.x_plot, cumulant, cumulant+kernel_weights[i,:], facecolor=color, interpolate=True, alpha=alpha)
             # Add to the cumulant
             cumulant += kernel_weights[i,:]
 
         # Plot range
-        plt.ylim([0.0, self.nModels])
+        plt.ylim([0.0, self.n_models])
         plt.xlim([self.x_min, self.x_max])
         ax.set_ylabel(ylabel, fontsize=12)
 
@@ -343,7 +447,7 @@ class Plotter1D(object):
         # Get an actual color cycle oject
         color_cycle = ax._get_lines.color_cycle
 
-        for i in xrange(self.nModels):
+        for i in xrange(self.n_models):
             # Max alpha for the plots
             max_alpha = model_alpha
 
@@ -409,5 +513,23 @@ class Plotter1D(object):
 
         ax.set_xlabel(xlabel)
 
+    def plot_next(self, ax, x_next, y_next, edgecolor='magenta', facecolor='black', edgealpha=0.9, facealpha=0.7, markersize=200):
+        # Set current plt axis to ax
+        plt.sca(ax)
 
+        # Custom aligned hovering triangle marker
+        verts = list(zip([-0.75,0.75,0.0, -0.75, 0.75],[1.4,1.4,0.4, 1.4, 1.4]))
+
+        print(x_next)
+        print(y_next)
+        # Create the marker above the y_next value for the face
+        ax.scatter(x_next, y_next, s=markersize, edgecolors='none', facecolors=facecolor, alpha=facealpha,
+                   linewidth=0.01*markersize,
+                   marker=(verts,0),
+                   zorder=3)
         
+        # Create the marker for the edge
+        ax.scatter(x_next, y_next, s=markersize, edgecolors=edgecolor, facecolors='none', alpha=edgealpha,
+                   linewidth=0.01*markersize,
+                   marker=(verts,0),
+                   zorder=3)

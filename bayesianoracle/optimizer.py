@@ -10,11 +10,14 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  kernel_type='Gaussian',
                  kernel_prior_type='Gamma',
                  init_kernel_range=1.0,
-                 init_kernel_var=1e2,
-                 kappa_explore=1.0,
-                 kappa_detail=0.10,
+                 init_kernel_var=-1,
+                 constraints=[],
+                 bool_compact=False,
+                 bounding_box=[],
+                 kappa_explore=0.80,
+                 kappa_detail=0.20,
                  kernel_mult=1.0,
-                 kernel_mult_explore=2.0,
+                 kernel_mult_explore=1.0,
                  min_trust=0.01,
                  precision_alpha=2.0,
                  precision_beta=10.0,
@@ -28,6 +31,16 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         init_kernel_range : (scalar) initial guess of the kernel range
         init_kernel_var   : (scalar) guess of the spread in the kernel range
                             values
+        constraints       : (list of functions) each included function imposes the constraint that
+                            function(x) >= 0. Only works if constraint set is compact.
+                            Each function should be vectorized to work
+                            on multiple inputs.
+        bool_compact      : (boolean) true if the constraint set is compact. 
+                            in which case no trust radius is used. If bool_compact
+                            is True, then bounding box needs to be specified
+        bounding_box      : (ndim x 2 matrix). The i^th row has two values
+                            li, ui, where we are sure that the constraint set
+                            lies within li and ui in the i^th coordinate.
         kappa_explore     : (scalar) the kappa value to use in the exploration
                             phase
         kappa_detail      : (scalar) the kappa value to use in the detail phase
@@ -53,6 +66,10 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.kappa_detail = kappa_detail
 
         # Set the kernel prior based on specifications
+        if init_kernel_var == -1:
+            # Use default variance of 10% of init_kernel_rnage
+            init_kernel_var = init_kernel_range*0.1
+
         if kernel_prior_type == 'Gamma':
             self.set_gamma_kernel_prior(init_kernel_range, init_kernel_var)
         elif kernel_prior_type == 'InvGamma':
@@ -62,14 +79,19 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         else:
             assert False,'kernel_prior_type must be a \'Gamma\', \'InvGamma\', or \'LogNormal\''
 
+        # Set up the contraints information
+        self.constraints = constraints
+        self.bool_compact = bool_compact
+        self.bounding_box = bounding_box
+
         # trust radius is kernel_mult * kernel_range
         self.kernel_mult = kernel_mult
         self.kernel_mult_explore = kernel_mult_explore
         
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
-        self.thresh_factor = 0.2 # Percetage of current kernel to warrant a "close step"
-        self.num_near_thresh = 5
+        self.thresh_factor = 0.05 # Percetage of current kernel to warrant a "close step"
+        self.num_near_thresh = 3
 
         self.__init_iteration_variables()
 
@@ -82,7 +104,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.x_min_hist = None  # (n x iteration matrix) of min locations
         self.run_count = 0  # Iterations since beginning of run
         self.prev_num_near = 0  # Previous count of iterations since x_min hasn't changed
-        self.prev_phase = 'low_density'  # Previous phase
+        self.prev_phase = 'detail'  # Previous phase
         self.phase='detail'  # Current phase
 
     def set_kappa_detail(self, kappa):
@@ -105,7 +127,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         """
         self.kappa_explore = kappa
 
-    def locate_next_point(self):
+    def get_kappa_detail(self):
+        return self.kappa_detail
+    def get_kappa_explore(self):
+        return self.kappa_explore
+
+    def locate_next_point(self, bool_return_fval=False):
         """
         Locates the next point to begin optimization. Hyperparameters
         are optimized in this function.
@@ -147,7 +174,9 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             self.iteration += 1
             if self.verbose:
                 print("BayesianOracle>> requesting DETAIL point")
-            return self.locate_detail_point()
+            # Update phase
+            self.prev_phase = 'detail'
+            return self.locate_detail_point(bool_return_fval=bool_return_fval)
 
         num_near = self.prev_num_near
 
@@ -196,39 +225,42 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         if self.phase == 'detail':
             if self.verbose:
                 print("BayesianOracle>> requesting DETAIL point")
-            return self.locate_detail_point()
+            return self.locate_detail_point(bool_return_fval)
         elif self.phase == 'exploration':
             if self.verbose:
                 print("BayesianOracle>> requesting EXPLORATION point")
-            return self.locate_exploration_point()
+            return self.locate_exploration_point(bool_return_fval)
         else:
             if self.verbose:
                 print("BayesianOracle>> requesting RANDOM LOW DENSITY point")
-            return self.locate_low_density_point()
+            return self.locate_low_density_point(bool_return_fval)
 
-    def locate_low_density_point(self):
+    def get_prev_phase(self):
+        return self.prev_phase
+
+    def locate_low_density_point(self, bool_return_fval=False):
         def fun(X):
-            return self.calculate_N_eff(X)
+            return self.calculate_N_eff_bayesian(X)
 
-        return self.locate_acquisition_point(trust_radius=self.trust_low_density, fun=fun)
+        return self.locate_acquisition_point(trust_radius=self.trust_low_density, fun=fun, bool_return_fval=bool_return_fval)
 
-    def locate_exploration_point(self):
+    def locate_exploration_point(self, bool_return_fval=False):
         def fun(X):
             return self.calculate_discounted_mean(X, self.kappa_explore)
  
-        return self.locate_acquisition_point(trust_radius=self.trust_explore, fun=fun)
+        return self.locate_acquisition_point(trust_radius=self.trust_explore, fun=fun, bool_return_fval=bool_return_fval)
 
-    def locate_detail_point(self):
+    def locate_detail_point(self, bool_return_fval=False):
         def fun(X):
             return self.calculate_discounted_mean(X, self.kappa_detail)
 
-        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun)
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun, bool_return_fval=bool_return_fval)
 
-    def locate_min_point(self):
+    def locate_min_point(self, bool_return_fval=False):
         def fun(X):
             return self.calculate_discounted_mean(X, 0.0)
 
-        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun)
+        return self.locate_acquisition_point(trust_radius=self.trust_detail, fun=fun, bool_return_fval=bool_return_fval)
 
     def __gen_n_seed_around(self, x0, n_seed, trust_radius):
         """
@@ -264,7 +296,18 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         return X_search
 
-    def locate_acquisition_point(self, trust_radius=1.0, fun=None):
+    def __check_constraints(self, x):
+        
+
+    def __gen_n_seed_in_constraints(self, n_seed):
+        X_search = []
+        while len(X_search) < n_seed:
+            # Generate random seed in bounding box
+            sample = np.random.uniform(self.bounding_box[:,0], self.bounding_box[:,1])
+            # Check if sample satisfies the constraints
+            
+
+    def locate_acquisition_point(self, trust_radius=1.0, fun=None, bool_return_fval=False):
         """
         Locates a new location within trust_radius distance of any previous 
         tested locations for future function evaluations. The new location
@@ -352,11 +395,14 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         print("BayesianOracle>> " + str(x_final))
 
         # Get information about the current location
-        m, u, s, n = self.predict_with_unc(np.array([x_final]).T)
+        m, u, s, n = self.predict_bayesian(np.array([x_final]).T)
         print("BayesianOracle>> mean: %.5f," %m + 
               " unexplained std: %.5f" %u + 
               " explained std: %.5f," %s + 
               " effective sample size: %.2f" %n)
         print("")
 
-        return x_final
+        if bool_return_fval:
+            return x_final, dm(x_final)
+        else:
+            return x_final
