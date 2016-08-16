@@ -10,4 +10,5 @@ cd tests/quadraticBayesianAveraging
 #python testBMA1D.py
 #python 2Dexample.py
 #python 2Dexample_multiple.py
-python testBayesianBMA1D.py
+#python testBayesianBMA1D.py
+python testBayesianBMAO1D.py

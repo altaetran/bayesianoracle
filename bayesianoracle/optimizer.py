@@ -11,6 +11,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  kernel_prior_type='Gamma',
                  init_kernel_range=1.0,
                  init_kernel_var=-1,
+                 n_int=50,
                  constraints=[],
                  bool_compact=False,
                  bounding_box=[],
@@ -21,6 +22,8 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  min_trust=0.01,
                  precision_alpha=2.0,
                  precision_beta=10.0,
+                 bool_sample_low_density=False,
+                 bool_exploration=True,
                  verbose=True):
         """
         Class initializer. 
@@ -31,6 +34,8 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         init_kernel_range : (scalar) initial guess of the kernel range
         init_kernel_var   : (scalar) guess of the spread in the kernel range
                             values
+        n_int             : (integer) max number of samples to use for integration
+                            over the kernel range
         constraints       : (list of functions) each included function imposes the constraint that
                             function(x) >= 0. Only works if constraint set is compact.
                             Each function should be vectorized to work
@@ -50,14 +55,18 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         min_trust         : (scalar) minimum trust radius size.
         precision_alpha   : (scalar) the alpha value for the gamma prior on precision
         precision_beta    : (scalar) the beta value for the gamma prior on precision
+        bool_sample_low_density : (boolean) True if low density points are to be sampled
+                            during exploration
         verbose           : (boolean) report progress throughout optimization?
         """
 
         super(QuadraticBMAOptimizer, self).__init__(ndim=ndim,
                                                     verbose=verbose,
                                                     init_kernel_range=init_kernel_range,
+                                                    n_int=n_int,
                                                     kernel_type=kernel_type)
-
+        self.precision_alpha = precision_alpha
+        self.precision_beta = precision_beta
         self.set_precision_prior_params(precision_alpha, precision_beta)
 
         self.init_kernel_range = init_kernel_range
@@ -67,8 +76,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         # Set the kernel prior based on specifications
         if init_kernel_var == -1:
-            # Use default variance of 10% of init_kernel_rnage
-            init_kernel_var = init_kernel_range*0.1
+            # Use default variance of 25% of init_kernel_rnage
+            # init_kernel_var = init_kernel_range*0.25
+            # Use default of setting alpha = 3 and determinig scale
+            alpha = 3.0
+            beta = alpha / init_kernel_range
+            init_kernel_var = alpha / beta**2
 
         if kernel_prior_type == 'Gamma':
             self.set_gamma_kernel_prior(init_kernel_range, init_kernel_var)
@@ -93,6 +106,9 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.thresh_factor = 0.05 # Percetage of current kernel to warrant a "close step"
         self.num_near_thresh = 3
 
+        self.bool_sample_low_density = bool_sample_low_density
+        self.bool_exploration = bool_exploration
+
         self.__init_iteration_variables()
 
     def __init_iteration_variables(self):
@@ -106,6 +122,10 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.prev_num_near = 0  # Previous count of iterations since x_min hasn't changed
         self.prev_phase = 'detail'  # Previous phase
         self.phase='detail'  # Current phase
+
+    def set_precision_beta(self, beta):
+        self.precision_beta = beta
+        self.set_precision_prior_params(self.precision_alpha, self.precision_beta)
 
     def set_kappa_detail(self, kappa):
         """ 
@@ -199,24 +219,25 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             print("BayesianOracle>> number of iterations with small steps relative to kernel width: " + str(num_near))
             print("")
 
-
-        if num_near < self.num_near_thresh:
+        if not self.bool_exploration:
             self.phase = 'detail'
-        elif self.prev_phase == 'detail':
-            self.phase = 'exploration'
-        elif self.prev_phase == 'exploration':
-            self.phase = 'low_density'
+        elif self.bool_sample_low_density:
+            if num_near < self.num_near_thresh:
+                self.phase = 'detail'
+            elif self.prev_phase == 'detail':
+                self.phase = 'exploration'
+            elif self.prev_phase == 'exploration':
+                self.phase = 'low_density'
+            else:
+                self.phase = 'detail'
         else:
-            self.phase = 'detail'
+            if num_near < self.num_near_thresh:
+                self.phase = 'detail'
+            elif self.prev_phase == 'detail':
+                self.phase = 'exploration'
+            elif self.prev_phase == 'exploration':
+                self.phase = 'detail'
 
-        """
-        if self.prev_phase == 'detail':
-            self.phase = 'exploration'
-        elif self.prev_phase == 'exploration':
-            self.phase = 'low_density'
-        else:
-            self.phase = 'detail'
-        """
         self.iteration += 1
         self.prev_num_near = num_near
         self.run_count += 1
@@ -296,16 +317,42 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         return X_search
 
-    def __check_constraints(self, x):
+    def __check_constraints(self, X):
+        """
+        X : (n x p) matrix of p points for which constraint checking is 
+            desired.
+        returns
+        -------
+        (1 x p vector of booleans) with True if the j^th point satisifes 
+        the constraints
+        """
+        # Initialize all to true
+        constraint_check = np.tile(True, X.shape[1])
+        for i in xrange(len(self.constraints)):
+            # Check which points satisfy the i^th constraint
+            constraint_check &= (self.constraints[i](X) >= 0)
         
+        return constraint_check
 
     def __gen_n_seed_in_constraints(self, n_seed):
-        X_search = []
-        while len(X_search) < n_seed:
+        X_search = np.array([[]])
+
+        n_test = n_seed
+
+        while X_search.shape[1] < n_seed:
             # Generate random seed in bounding box
-            sample = np.random.uniform(self.bounding_box[:,0], self.bounding_box[:,1])
+            # Correct for 1 dim
+            if self.ndim == 1:
+                cur_samples = np.array([np.random.uniform(self.bounding_box[:,0], self.bounding_box[:,1], n_seed)])
+            else:
+                cur_samples = np.random.uniform(self.bounding_box[:,0], self.bounding_box[:,1], n_seed)
             # Check if sample satisfies the constraints
-            
+            constraint_check = self.__check_constraints(cur_samples)
+            # Only take the samples that satisfy the constraints
+            X_search = np.hstack([X_search, cur_samples[:, constraint_check]])
+        
+        # Remove excess
+        return X_search[:, 0:n_seed]
 
     def locate_acquisition_point(self, trust_radius=1.0, fun=None, bool_return_fval=False):
         """
@@ -345,14 +392,19 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # Get the counts of the indices
         counter = Counter(index_samples)
 
-        X_search = np.hstack([self.__gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
+        if self.bool_compact:
+            # Use uniform sampling from the constraints
+            X_search = self.__gen_n_seed_in_constraints(n_seed)
+        else:
+            # Otherwise use trust radius
+            X_search = np.hstack([self.__gen_n_seed_around(X_stack[:,i], counter[i], trust_radius)
                               for i in range(n_models)])
 
         # Add the previous minima locations as additional seeds if avail
         if not (self.x_min_hist is None):
             X_search = np.hstack([X_search, self.x_min_hist])
 
-        # Minimize discounted means
+        # Minimize discounted means over the randomly selected points
         discounted_means = fun(X_search)
         j_min = np.argmin(discounted_means)
         x_search = X_search[:, j_min]
@@ -366,15 +418,24 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             # Get the vectorized form into the correct n x 1 form
             return fun(np.array([x]).T)
         
-        # dd trust radius constraint
-        constraints = {'type' : 'ineq', 'fun': trust_check}
+        # dd trust radius constraint if not compact
+        if self.bool_compact:
+            secondary_constraints = []
+            for i in xrange(len(self.constraints)):
+                # Create the constraint, knowing that x needs to be vectorized
+                # since this is not done in scipy.optimize.minimize
+                secondary_constraints.append({'type' : 'ineq', 'fun': 
+                                              (lambda x : self.constraints[i](np.array([x]).T))})
+        else:
+            secondary_constraints = {'type' : 'ineq', 'fun': trust_check}
 
-        # Create results 
+        # Further optimization with constraints  
         result = scipy.optimize.minimize(dm, x_search,
-                                         constraints=constraints,
+                                         constraints=secondary_constraints,
                                          #jac=True,
                                          options={'maxiter':100},
                                          method='COBYLA')
+
         
         if self.verbose:
             print("BayesianOracle>> found in %.1f seconds" % misc.toc())

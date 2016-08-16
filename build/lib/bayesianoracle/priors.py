@@ -105,6 +105,16 @@ class GammaPrior(object):
         # Set the scale to the reciprocal of beta
         self.scale = 1.0 / beta
 
+    def set_mean_var(self, mean, var):
+        # Determine beta and alpha for Gamma using the mean and var
+        beta = mean / var
+        alpha = mean * beta
+        
+        # Set the shape param to alpha
+        self.a = alpha
+        # Set the scale to the reciprocal of beta
+        self.scale = 1.0 / beta
+
     def get_mode(self):
         return (self.a-1.0) * self.scale
 

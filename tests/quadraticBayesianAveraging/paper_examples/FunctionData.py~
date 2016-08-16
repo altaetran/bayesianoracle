@@ -1,0 +1,44 @@
+import numpy as np
+
+# Create the function
+def fun(x):
+    return (np.square(np.square(x))+10.0*np.sin(x)+10.0*np.sin(5.0*x))[0]
+    #return (np.square(np.square(x))+10.0*np.sin(x))[0]
+
+# Time step minimum
+h = 0.000001
+
+def fun_all(x,r1=0.0, r2=0.0, r3=0.0, bool_zero=False):
+    """
+    r1 : additive error on f
+    r2 : additive error on grad
+    r3 : additive error on Hess
+    """
+    f = fun(x) + r1
+    der = (fun(x+h)-fun(x-h))/(2*h)
+    derder = (fun(x+h)+fun(x-h)-2*fun(x))/(h**2)
+    grad = np.array([der]) + r2
+    Hess = np.array([[derder]]) + r3
+    if bool_zero:
+        Hess = Hess*0.0
+        grad = grad*0.0
+    return f, grad, Hess
+
+
+def init():
+    """
+    Initializes all the information need to create consistent plots across
+    the different modules
+    """
+    # Model to plot
+    model_ind = 0
+
+    # Plot ranges
+    x_range = [-3.0, 3.0]
+    y_range = [-150.0, 150.0]
+
+    # Number of x points to plot
+    num_points = 200
+
+    # Resolution of saved imags
+    dpi=600

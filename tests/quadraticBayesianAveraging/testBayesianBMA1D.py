@@ -92,12 +92,13 @@ def plot(bmap, X, k_fig, x_next, kappa):
         plt.savefig("figures/"+str(k_fig)+"_d_decomposition_"+label+"_.png", dpi=dpi)
 
         plt.close(fig)
-
+    """
     plot_decomposition(kernel_range=0.1, label='0010')
     plot_decomposition(kernel_range=0.5, label='0050')
     plot_decomposition(kernel_range=1.0, label='0100')
     plot_decomposition(kernel_range=2.0, label='0200')
     plot_decomposition(kernel_range=5.0, label='0500')
+    """
 
 
 
@@ -156,9 +157,9 @@ for k in range(X_next.shape[1]):
     r2 = (40.0+40*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
     r3 = (60.0+60*np.sin(x)[0])*(np.random.rand(1,1)[0,0]-0.5)
 
-#    r1 = 0.0
-#    r2 = 0.0
-#    r3 = 0.0
+    r1 = 0.0
+    r2 = 0.0
+    r3 = 0.0
 
     # Get y, grad, hess, and update corresponding lists
     f, grad, Hess = fun_all(x, r1, r2, r3)

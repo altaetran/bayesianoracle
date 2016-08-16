@@ -1,0 +1,164 @@
+import numpy as np
+import bayesianoracle as bo
+import bayesianoracle.plot as boplotter
+
+# Import function information
+from function_data import *
+execfile("function_data.py")
+
+def plot(bmao, X, k_fig):
+    """ Auxillary plotting function
+    
+    Parameters
+    ----------
+    bma : EnrichedBayesianModelAveraging object to be plotted
+    X  : The values that have been previously traversed
+    mode : mode = "predict" if the GaussianProcessEI prediction is disired
+         or mode = "EI" if the expected improvement is desired
+    k_fig  : The suffix seed for saving the figure
+    
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    from matplotlib import colors as cl
+    from matplotlib import gridspec
+
+    # Plot ranges
+    x_range = [-3.0, 3.0]
+    y_range = [-150.0, 150.0]
+
+    # Number of x points to plot
+    num_points = 200
+
+    # Resolution of saved imags
+    dpi=600
+
+    # Get the bma
+    bma = bmao.bma
+
+    boplt = boplotter.Plotter1D(x_range=x_range, y_range=y_range, num_points=num_points)
+    boplt.set_bma(bma)
+    boplt.get_bayesian_bma_evals()
+
+    ### Plot the data and the models
+    fig, ax = plt.subplots()
+
+    boplt.plot_fun(ax, fun)
+    boplt.plot_models(ax)
+    boplt.plot_data(ax, bool_color_cycled=True)
+    plt.savefig("FullyBayesianBMADecomposition_figures/"+str(k_fig)+"_a_obs_.png", dpi=dpi)
+    plt.close(fig)
+
+    ### Plot the kernel range likelihoods
+    n_subplot = 5
+    fig = plt.figure(figsize=(8, 8), dpi=dpi)
+    gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[10, 10, 1, 1, 4])
+    
+    # Create axis array
+    ax = []
+    for i in range(n_subplot):
+        ax.append(plt.subplot(gs[i]))
+
+    boplt.plot_bayesian_likelihoods(ax[0], bool_posterior=False, ylabel=r'prior for $\theta$', bool_colorbar=False)
+    heatmap = boplt.plot_bayesian_likelihoods(ax[1], bool_posterior=True, ylabel=r'posterior of $\theta$', bool_colorbar=False)
+    boplt.plot_data_locations(ax[1], bool_color_cycled=True)
+    # Custom colorbar on axis 2
+    cbar = fig.colorbar(heatmap, cax=ax[2], orientation='horizontal')
+    cbar.set_label('probability')
+    ax[3].axis('off')
+    boplt.plot_bayesian_avg_kernel_ranges(ax[4], ylabel=r'expected $\theta$')
+    plt.savefig("FullyBayesianBMADecomposition_figures/"+str(k_fig)+"_b_likelihoods_.png", dpi=dpi)
+    plt.close(fig)
+
+    ### Plot the bayesian quantities 
+    fig, ax = plt.subplots()        
+
+    func_line = boplt.plot_fun(ax, fun)
+    mean_line = boplt.plot_means(ax)
+    exp_fill, unexp_fill, std_fill = boplt.plot_confidence(ax, bool_bayesian=True)
+
+    # Plot the acquisition function if prev phase was detail or explore
+
+    # Plot points
+    scat = boplt.plot_data(ax, bool_color_cycled=True)
+    legend = plt.legend([exp_fill, unexp_fill, std_fill, mean_line, func_line, scat], 
+                        ['Explained Deviation', 'Unexplained Deviation', 'Total Deviation', 'Estimated Mean Function', 'True Mean Function', 'Data'], 
+                        loc='upper center', bbox_to_anchor=(0.5, 1.075), ncol=2, fancybox=True, shadow=False, scatterpoints=1)
+    legend.legendHandles[5]._sizes = [30]
+    plt.setp(legend.get_texts(), fontsize=8)
+
+    plt.savefig("FullyBayesianBMADecomposition_figures/"+str(k_fig)+"_c_predictive_.png", dpi=dpi)
+    plt.close(fig)
+
+    ### Plot the decomposition for different kernel ranges
+
+    def plot_decomposition(kernel_range, label):
+        boplt.get_pointwise_bma_evals(kernel_range=kernel_range)
+
+        n_subplot = 6
+        fig = plt.figure(figsize=(8, 12), dpi=dpi)
+        gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[1, 2, 1, 1, 1, 2])
+
+        ax = []
+        for i in range(n_subplot):
+            ax.append(plt.subplot(gs[i]))
+
+        boplt.plot_model_priors(ax[0], ylabel='initial\n model weights', xlabel=None)
+        boplt.plot_fun(ax[1], fun, xlabel=None)
+        boplt.plot_visually_weighted_models(ax[1], 'prior', ylabel='initial combination', xlabel=None)
+        boplt.plot_data(ax[1], bool_color_cycled=True, xlabel=None)        
+        boplt.plot_kernel_weights(ax[2], ylabel='cumulative data\n relevance', xlabel=None)
+        boplt.plot_marginal_likelihoods(ax[3], xlabel=None, ylabel='performance')
+        boplt.plot_model_posteriors(ax[4], ylabel='updated\n model weights', xlabel=None)
+        boplt.plot_fun(ax[5], fun, xlabel=None)
+        boplt.plot_visually_weighted_models(ax[5], 'posterior', ylabel='recombination', xlabel=None)
+        boplt.plot_data(ax[5], bool_color_cycled=True, xlabel=r'$x$')
+
+        # Align the y labels
+        y_shift = 0.5
+        x_shift = -0.085
+        
+        for i in xrange(n_subplot):
+            ax[i].yaxis.set_label_coords(x_shift, y_shift)
+
+        plt.savefig("FullyBayesianBMADecomposition_figures/"+str(k_fig)+"_d_decomposition_"+label+"_.png", dpi=dpi)
+
+        plt.close(fig)
+
+    plot_decomposition(kernel_range=0.1, label='0010')
+    plot_decomposition(kernel_range=0.25, label='0025')
+    plot_decomposition(kernel_range=1.0, label='0100')
+    plot_decomposition(kernel_range=2.0, label='0200')
+
+
+bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1, 
+                                          init_kernel_range=1.0, 
+                                          n_int=1000,
+                                          precision_beta = 100.0,
+                                          constraints = [constr1, constr2],
+                                          bounding_box = bounding_box,
+                                          bool_compact = True,
+                                          kernel_type='Gaussian')
+
+X = None
+y_hist = np.array([])
+
+for k in xrange(X_complete.shape[1]):
+    # Get next
+    x_next = X_complete[:,k]
+    x = x_next
+    if k == 0:
+        X = np.array([x_next])
+    else:
+        X = np.hstack([X, np.array([x_next])])
+    
+    # Get y, grad, hess from precomputed lists
+    f = f_complete[k]
+    grad = grad_complete[k]
+    Hess = Hess_complete[k]
+    
+    bmao.add_observation(x, f, grad, Hess)
+
+# Plot result
+plot(bmao, X, k)
+
