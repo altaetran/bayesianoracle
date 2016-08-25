@@ -1,5 +1,4 @@
 import numpy as np
-import gptools
 import scipy
 # For deep copy
 import copy
@@ -7,425 +6,6 @@ import copy
 from . import priors
 from . import misc
 # Optimizer objects
-
-class EnrichedGaussianProcess(object):
-    """ Base class for holding an extended GaussianProcess object """
-    def __init__(self, ndim,
-                 max_der_order=2,
-                 constraints=None,
-                 amplitude_prior=None,
-                 scale_priors=None,
-                 noisy=False,
-                 kernel_type='SquaredExponential',
-                 verbose=True):
-        # Check that the constraints dimensions is consistent
-        if (not (constraints is None)) and (len(constraints) != ndim):
-            raise Exception("GaussianProcess: constraints inconsistent with input dimension")
- 
-        # Default cosntraints
-        if constraints is None:
-            constraints = [(-1e8, 1e8) for _ in range(ndim)]
-        # Default priors
-        if amplitude_prior is None:
-            #amplitude_prior = priors.UniformPrior([0, 1e2])
-            #amplitude_prior = priors.ExponentialPrior(100)
-            amplitude_prior = priors.LogNormalPrior(0,1)
-        if scale_priors is None:
-            scale_priors = [priors.LogNormalPrior(0, 1) for _ in range(ndim)]
-        
-
-        # Set dimension size, constraints, and maximum derivative order
-        self.ndim = ndim
-        self.max_der_order = max_der_order
-        self.constraints = constraints
-        self.verbose=verbose
-        self.amplitude_prior = amplitude_prior
-        self.scale_priors = scale_priors
-        self.kernel_type = kernel_type
-        self.noisy = noisy
-
-        # initialize kernel
-        self.init_kernels()
-
-        # Create initial data segment
-        self.data_init = []
-        for k in range(self.max_der_order+1):
-            self.data_init.append({'X':None, 'q':[], 'q_err':[]})
-
-        # Intialize data segment
-        self.data = copy.deepcopy(self.data_init)
-
-        # declare fit status
-        self.is_fit = False
-
-    def init_kernels(self):
-        """ Initializes the kernel functions for the Gaussian Process, and 
-        initializes the ac tual gaussian process """
-
-        if self.kernel_type == 'SquaredExponential':
-            kernel = gptools.SquaredExponentialKernel(self.ndim,
-                                                      hyperprior=[self.amplitude_prior,] + self.scale_priors)
-        elif self.kernel_type == 'Matern52':
-            kernel = gptools.Matern52Kernel(self.ndim,
-                                            hyperprior=[self.amplitude_prior,] + self.scale_priors)
-        else:
-            raise Exception("Requested Kernel not implemented")
-
-        
-        if self.noisy:
-            # If requested, set noise priors and create a diagonal noise kernel
-            noise_pX = priors.LogNormalPrior(0, 1)
-            noise_pG = priors.LogNormalPrior(0, 1)
-            noise_pH = priors.LogNormalPrior(0, 1)
-
-            # Exponential priors allow the noise to be zero, but also large if necessary
-            #noise_pX = priors.ExponentialPrior(1)
-            #noise_pG = priors.ExponentialPrior(1)
-            #noise_pH = priors.ExponentialPrior(1)
-
-            # Set up diagonal noise kernel for the value
-            noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
-                                                       n=0,
-                                                       initial_noise=1e-3,
-                                                       fixed_noise=False, 
-                                                       noise_bound=(1e-3, np.inf),
-                                                       hyperprior=[noise_pX])
-            if self.max_der_order > 0:
-                # If needed, set up gradient noise kernel
-                grad_noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
-                                                                n=1,
-                                                                initial_noise=1e-3,
-                                                                fixed_noise=False, 
-                                                                noise_bound=(1e-3, np.inf),
-                                                                hyperprior=[noise_pG])
-                noise_kernel = noise_kernel.__add__(grad_noise_kernel)
-            if self.max_der_order > 1:
-                # If needed, set up hessian noise kernel
-                hess_noise_kernel = gptools.DiagonalNoiseKernel(self.ndim,
-                                                                n=2,
-                                                                initial_noise=1e-3,
-                                                                fixed_noise=False, 
-                                                                noise_bound=(1e-3, np.inf),
-                                                                hyperprior=[noise_pH])
-                noise_kernel = noise_kernel.__add__(hess_noise_kernel)
-        else:
-            noise_kernel = None
-
-        self.gp_ = gptools.GaussianProcess(kernel, noise_k=noise_kernel)
-
-    def add_data(self, X, y, y_err=None, der_order=0):
-        """
-
-        Parameters
-        ----------
-        X     : array-like, shape = [n_samples, n_features]
-                Training vector, where n_samples is the number of samples and
-                n_features is the number of features.
-
-        y     : list of objects (func observations, gradients, hessians, etc)
-        y_err : list of errors, the element types of y_err must match that of y 
-        der_order : derivative order of the input data """
-
-        # Use default error of zero
-        if y_err is None:
-            y_err = [0] * len(y)
-
-        if X.shape[0] != len(y):
-            raise Exception('X and y have different number of points')
-
-        # Store X and y and y_err
-        if self.data[der_order]['X'] is None and self.data[der_order]['q'] == []:
-            self.data[der_order]['X'] = X
-        else:
-            self.data[der_order]['X'] = np.vstack((self.data[der_order]['X'], X))
-
-        self.data[der_order]['q'] = self.data[der_order]['q'] + y
-        self.data[der_order]['q_err'] = self.data[der_order]['q_err'] + y_err
-
-    def clear_gp_data(self):
-        """ Clears the data from the Gaussian Process, without touching the 
-        fitted parameters """
-
-        self.gp_.y = np.array([], dtype=float)
-        self.gp_.X = None
-        self.gp_.n = None
-        self.gp_.err_y = scipy.array([], dtype=float)
-        self.gp_.K_up_to_date = False
- 
-    def clear_data(self):
-        """ Reinitializes the data segment """
-
-        self.data = copy.deepcopy(self.data_init)
-     
-    def optimize_hyperparameters(self, n_starts):
-        """ Optimize the hyperparameters. If the number number of starts is not
-        sufficient to achieve a minimum log likelihood threshold, 
-        it is increased until a max amount """
-
-        import warnings
-
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-                
-            n_starts_mult = 2
-            n_starts_max = 50
-            ll_min = -1000*self.ndim
-            
-            # Compute the first fit
-            ll = self.gp_.optimize_hyperparameters(random_starts=n_starts)
-            if n_starts == 0:
-                n_starts = 1
-            # Iterate until minimal log likelhood or max n_starts is achieved
-            while(ll < ll_min) and n_starts < n_starts_max:
-                n_starts *= n_starts_mult
-                ll = self.gp_.optimize_hyperparameters(random_starts=n_starts)
-
-            return ll
-
-    def fit(self, n_starts):
-        """Fit the estimator with the stored data """
-        
-        # Reinitialize gaussian process
-        self.clear_gp_data()
-
-        # Loop through data and and add it to the GP
-        for m in range(self.max_der_order+1):
-            X = self.data[m]['X']
-            y = self.data[m]['q']
-            y_err = self.data[m]['q_err']
-            # Add data to GP if data is available
-            if not (X is None):
-                self.gp_.add_data_list(X, y, err_y=y_err, n=m)
-
-        # Fit gaussian process with partial data
-        if self.verbose:
-            misc.tic()
-
-        self.optimize_hyperparameters(n_starts)
-        
-        if self.verbose:
-            print("BayesianOracle>> hyperparameter optimization finished in " + str(misc.toc()) + " seconds")
-            print("BayesianOracle>> current log-likelihood: %.4f" % self.gp_.ll)
-            print("BayesianOracle>> current hyperparameters:")
-            print(self.gp_.k.params)
-            if self.noisy:
-                print("BayesianOracle>> current noise kernel hyperparameters:")
-                print(self.gp_.noise_k.params)
-                
-        # Update fit status
-        self.is_fit = True
-        return self.gp_.ll
-
-    def predict(self, X, der_order=0):
-         """ Performs a standard prediciton using the underlying Gaussian Process
-         
-         Parameters
-         ----------
-         X : numpy array, shape = (n_points, ndim)
-         where n_samples is the number of requested samples
-         
-         Output
-         ------
-         mean : numpy array, shape = (n_points,). Contains prediction means
-         std  : numpy array, shape = (n_points,). Contains prediction standard deviations """
-
-         if not self.is_fit:
-             raise Exception("Gaussian Process was not fit before calling the predict method")
-
-         # Batch process for speed. 
-         batch_sz = 100
-         n_points = X.shape[0]
-         mean, std = self.gp_.predict(X[0:np.min([n_points, batch_sz]),:], n=0, return_mean=True, return_std=True)
-         # !!! ISSUE: imaginary output of gptools.GaussianProcess.predict()
-         mean = np.real(mean)
-         std = np.real(std)
-
-         for i in range(1,int(np.ceil(float(n_points)/batch_sz))):
-             # Calculate the underlying prediction
-             batch_mean, batch_std = self.gp_.predict(X[i*batch_sz:np.min([n_points, (i+1)*batch_sz]),:], n=0, return_mean=True, return_std=True)
-             # Stack up results
-             mean = np.real(np.hstack((mean, batch_mean)))
-             std = np.real(np.hstack((std, batch_std)))
-         return mean, std 
-
-    def calculate_EI(self, X, xi=0.01, order=1):
-        """ Calculates the generalized expected improvement
-
-        Parameters
-        ----------
-        X : array-like, shape = [n_samples, n_features]
-            Grid of candidate parameters at which to compute the expected
-            improvement
-        xi: minimum expected improvement
-        order : determines which generalized expected improvement to calculate
-
-        Returns
-        -------
-        ei : array shape=(n,)
-            The expected improvement (EI) at each of the
-            candidates
-
-        References
-        ----------
-        .. [1] Jones, D R., M. Schonlau, and W. J. Welch. "Efficient global
-           optimization of expensive black-box functions." J. Global Optim.
-           13.4 (1998): 455-492.
-           
-           https://www.cs.ubc.ca/~hoos/Publ/HutEtAl09b.pdf
-        """
-
-        # Get the prediction mean, std
-        mean, std = self.predict(X)
-
-        # Calculate the z score
-        if order == 1 or order == 2:
-            u = (np.min(self.data[0]['q']) - mean - xi) / std
-            ncdf = scipy.stats.norm.cdf(u)
-            npdf = scipy.stats.norm.pdf(u)
-    
-            if order == 1:
-                # Calculate the order 1 expected improvement
-                res = np.real(std * (u * ncdf + npdf))
-            elif order == 2:
-                # Calculate the order 2 expected improvement
-                res = np.real(std)**2*((u**2+1)*ncdf + u*npdf)
-        elif order == 0:
-            # Just calculate the mean
-            res = -np.real(mean)
-        else:
-            raise NotImplementedError('expected improvement order must be 0, 1 or 2')
-            res = None
-        return res
-        
-class MultiIndependentTaskGaussianProcess(object):
-    def __init__(self, 
-                 ndim,
-                 neq,
-                 max_der_order=2,
-                 constraints=None,
-                 noisy=False,
-                 kernel_type='SquaredExponential',
-                 verbose=True):
-        if constraints is None:
-            constraints = [(0, 1) for _ in range(ndim)]
-
-        self.ndim = ndim
-        self.neq = neq
-        self.constraints = constraints
-        self.max_der_order = max_der_order
-        self.noisy=noisy
-        self.kernel_type = kernel_type
-        self.verbose = verbose
-
-        # Initialize Gaussian Processes
-        self.multi_gp = []
-        for i in range(self.neq):
-            amplitude_prior = priors.UniformPrior([0,1e2])
-            scale_priors = [priors.LogNormalPrior(0, 1) for i in range(self.ndim)]
-            self.multi_gp.append(EnrichedGaussianProcess(self.ndim, 
-                                                         max_der_order=self.max_der_order,
-                                                         constraints=self.constraints,
-                                                         amplitude_prior=amplitude_prior,
-                                                         scale_priors=scale_priors,
-                                                         kernel_type=self.kernel_type, 
-                                                         noisy=self.noisy,
-                                                         verbose=self.verbose))
-
-    def add_residual_data(self, res_idx, X, y, y_err=None, order=0):
-        """ Add data for a specific residual to the corresponding Gaussian Process 
-
-        Parameters
-        ----------
-        res_idx : index of the residual to which the input data belongs 
-        X     : array-like, shape = [n_samples, n_features]
-                Training vector, where n_samples is the number of samples and
-                n_features is the number of features.
-
-        y     : list of objects (func observations, gradients, hessians, etc)
-        y_err : list of errors, the element types of y_err must match that of y 
-        der_order : derivative order of the input data """
-
-        if not ((res_idx < self.neq) and (res_idx >= 0)):
-            raise Exception("index  add_residual_data must be an integer between 0 and " + str(neq-1))
-
-        self.multi_gp[res_idx].add_data(X, y, y_err, order)
-        
-    def clear_residual_data(self, res_idx):
-        """ Clears all residual data """
-        self.multi_gp[res_idx].clear_data()
-        
-    def fit(self, n_starts):
-        """ Optimizes the hyerparameters of each Gaussian Process. """ 
-
-        for res_idx in range(self.neq):
-            ll = self.multi_gp[res_idx].fit(n_starts)
-    
-    def predict(self, X):
-        """ Returns the sum of residual squares mean and standard deviation.
-
-        Parameters
-        ----------
-        X : numpy array, shape = (n_points, ndim)
-        where n_samples is the number of requested samples
-        
-        Output
-        ------
-        mean : numpy array, shape = (n_points,). Contains prediction means
-        std  : numpy array, shape = (n_points,). Contains prediction standard deviations """
-
-        ignore_mu_sigma_term = False
-        
-        mu = []
-        Sigma_diag = []
-        # Acquire mu and diagonal Sigma elements for the cross covariations
-        for res_idx in range(self.neq):
-            mean, std = self.multi_gp[res_idx].gp_.predict(X)
-            mu.append(mean.tolist())
-            Sigma_diag.append(std.tolist())
-        # Now, each point gets one column, rather than one row
-        mu = np.array(mu)
-        Sigma_diag = np.array(Sigma_diag)
-        # Get the sum of squares along each of the residuals
-        mu_sum_sq = np.apply_along_axis(np.linalg.norm, 0, mu)**2
-        Sigma_sum_sq = np.apply_along_axis(np.linalg.norm, 0, Sigma_diag)**2
-        # Add the terms in place to get the mean.
-        mean = mu_sum_sq
-        if not ignore_mu_sigma_term:
-            mean += Sigma_sum_sq
-
-        # Get higher order matrix multiplications for the quadratic std
-        Sigma_Sigma = np.einsum('ij,ji->i', Sigma_diag.T, Sigma_diag)
-        mu_Sigma_mu = np.einsum('ij,ji->i', mu.T, Sigma_diag*mu)
-        # Add up the results in place
-        sigma = Sigma_Sigma
-        sigma *= 2
-        mu_Sigma_mu *= 4
-        sigma += mu_Sigma_mu
-        # Get the square root
-        sigma **= 0.5
-        return mean, sigma
-
-    def discounted_mean(self, X, kappa=1.0):
-        """ Calculates the expected improvement in the Chi Square variable
-        past a specific threshold 
-
-        Parameters
-        ----------
-
-        X : numpy array, shape = (n_points, ndim)
-        where n_samples is the number of requested samples
-        kappa : the discount factor. 
-
-        Output
-        ------
-        discounted mean : numpy array, shape = (n_points,). Contains the discounted means
-            for the points in X """
-
-        mean, std = self.predict(X)
-        std *= kappa
-        result = mean
-        result += std
-        return result
 
 class QuadraticModel(object):
 
@@ -537,6 +117,8 @@ class QuadraticBMAProcess(object):
         self.precision_alpha = 1.00  # Use 1 or 2 for differing results
         self.precision_beta = 100.0
 
+        self.bias_lambda = 0.1
+
         # Set the kernel prior to a default gamma
         self.kernel_prior = priors.GammaPrior()
 
@@ -565,34 +147,43 @@ class QuadraticBMAProcess(object):
     def __init_quadrature_samples(self):
         ### Only works for gamma prior on the kernel range
         n_int = self.n_int  # Number of roots for laguerre
-        min_weight = 1.0e-15
+        min_weight = 1.0e-20
         # Get the kernel ranges from generalized lageurre 
         # First get beta parma
         beta = self.kernel_prior.get_beta()
         alpha = self.kernel_prior.get_alpha()
-        
-        roots, weights = scipy.special.la_roots(n_int, alpha-1)
+ 
+        if n_int <= 1:
+            roots, weights = scipy.special.la_roots(n_int, alpha-1)
 
-        # Make the roots real
-        roots = np.real(roots)
+            # Make the roots real
+            roots = np.real(roots)
+
+        else:
+            roots = np.logspace(-3, 3, num=n_int)
+            e = (alpha)*np.log(roots) - beta*roots
+            weights = np.exp(e - np.amax(e))
+            weights /= np.sum(weights)
 
         # pare off small weights
         ind = np.array(range(n_int))
         ind_rem = ind[weights<min_weight]
-        roots = np.delete(roots, ind_rem)
-        weights = np.delete(weights, ind_rem)
+        lg_roots = np.delete(roots, ind_rem)
+        lg_weights = np.delete(weights, ind_rem)
 
-        self.roots = roots
-        self.weights = weights
+        print(lg_weights)
+
+        self.lg_roots = lg_roots
+        self.lg_weights = lg_weights
     
-        kernel_ranges = self.roots / beta
+        kernel_ranges = self.lg_roots / beta
 
         if self.verbose:
             min_kernel_range = np.min(kernel_ranges)
             max_kernel_range = np.max(kernel_ranges)
             print("BayesianOracle>> Minimum kernel range considered: "+str(min_kernel_range))
             print("BayesianOracle>> Maximum kernel range considered: "+str(max_kernel_range))
-            print("BayesianOracle>> Number of kernel ranges considered: "+str(len(weights)))
+            print("BayesianOracle>> Number of kernel ranges considered: "+str(len(lg_weights)))
 
         """
         self.roots = np.linspace(0.01, 10, 50) * beta
@@ -625,6 +216,17 @@ class QuadraticBMAProcess(object):
         """
         self.precision_alpha = precision_alpha
         self.precision_beta = precision_beta
+
+    def set_bias_prior_params(self, bias_lambda):
+        """
+        Setter for the bias parameters. The bias prior is a normal gamma
+        related to the precision prior
+        
+        args:
+        -----
+        bias_lambda  : (scalar) lambda value
+        """
+        self.bias_lambda = bias_lambda
 
     def set_kernel_range(self, kernel_range):
         """ 
@@ -750,7 +352,7 @@ class QuadraticBMAProcess(object):
 
         return distances_sq
 
-    def estimate_model_priors(self, X):
+    def estimate_model_priors(self, X, kernel_range):
         """
         Estimates the model priors at the positions x using the 
         existing lambda samples
@@ -764,6 +366,15 @@ class QuadraticBMAProcess(object):
         (n_models x p matrix) of the n_models model prior values
         at each of the p positions
 
+        """
+        # Get energies corresponding to this lambda vec and normalize
+        distances_sq = self.__get_model_distances(X)  # Model distances
+        energies = -distances_sq / (2. * kernel_range)
+        log_normalization = scipy.misc.logsumexp(energies, axis=0)
+        normalized_energies = energies - log_normalization[None,:]
+
+        model_priors = np.exp(normalized_energies)
+             
         """
         p = X.shape[1]
         n_models = self.get_n_models()
@@ -789,10 +400,10 @@ class QuadraticBMAProcess(object):
             model_prior_avg += prior_lambda/n_samples
 
         model_priors = model_prior_avg
-
+        """
         return model_priors
 
-    def estimate_log_model_priors(self, X):
+    def estimate_log_model_priors(self, X, kernel_range):
         """
         Estimates the model priors at the positions X using the 
         existing lambda samples
@@ -806,7 +417,8 @@ class QuadraticBMAProcess(object):
         (n_models x p matrix) of the n_models log model prior values
         at each of the p positions
         """
-        return np.log(self.estimate_model_priors(X))
+        soft_log = 1e-32
+        return np.log(self.estimate_model_priors(X, kernel_range)+soft_log)
 
     def calc_variable_kernel_weights(self, X, renorm, kernel_range):
         """ 
@@ -962,16 +574,25 @@ class QuadraticBMAProcess(object):
         
         # Get the J matrix
         J_mat = model_means_at_obs - y_obs[None,:]
+
         # Get the J Matrix elementwise square
         J_mat_sq = np.square(J_mat)
 
         # Calculate the effective number of samples
         N_eff = np.sum(relevance_weights, axis=0)
 
+        soft_N_eff = 1e-8
+        # calculate the residual mean
+        resi_mean = np.dot(J_mat, relevance_weights) / (N_eff[np.newaxis,:] + soft_N_eff)
+
         # Create the n_models x p error matrix
         # element i,j -> error of model i at j^th position
         errors = np.vstack([np.hstack([np.dot(relevance_weights[:,j],J_mat_sq[i,:])
                                        for j in xrange(p)]) for i in xrange(n_models)])
+
+        lam = self.bias_lambda
+        lam_factor = - np.square(N_eff) / (lam + N_eff)
+        eps = errors + lam_factor*np.square(resi_mean)
 
         # SET ERRORS TO ZERO
         if self.zero_errors:
@@ -981,11 +602,11 @@ class QuadraticBMAProcess(object):
         #marginal_likelihoods = np.power(1+errors/(2*self.precision_beta), -(self.precision_alpha+N_eff/2.0))
 
         # Get the log model priors
-        log_model_priors = self.estimate_log_model_priors(X)
+        log_model_priors = self.estimate_log_model_priors(X, kernel_range)
 
         # Calculate log marignal likelihoods
         log_marginal_likelihoods = np.multiply(-(self.precision_alpha+N_eff/2.0),
-                                                np.log(1+errors/(2*self.precision_beta)))
+                                                np.log(1+eps/(2*self.precision_beta)))
 
         log_unnorm_weights = np.add(log_marginal_likelihoods, log_model_priors)
 
@@ -995,9 +616,9 @@ class QuadraticBMAProcess(object):
 
         # Conditional return values
         if return_errors:
-            return model_weights, errors, N_eff
+            return model_weights, eps, N_eff, resi_mean
         if return_likelihoods:
-            return model_weights, errors, N_eff, np.exp(log_marginal_likelihoods)
+            return model_weights, eps, N_eff, resi_mean, np.exp(log_marginal_likelihoods)
         # Default return values
         return model_weights
 
@@ -1028,6 +649,45 @@ class QuadraticBMAProcess(object):
         
         return model_means
 
+    def model_biased_predictions(self, X, kernel_range=-1):
+        """
+        For each quadratic model, calculate the prediction of the model
+        on the input data points
+        
+        args:
+        -----
+        X : (n x p matrix) of the p locations for which predictions
+            are desired.
+
+        returns:
+        --------
+        (n_models x p matrix) of model predictions. Each row corresponds 
+        to a specific model's predictions
+        """
+        n = X.shape[0]
+        p = X.shape[1]
+        
+
+        # Check for default kernel range
+        if kernel_range == -1:
+            kernel_range = self.kernel_range
+
+        # Get model weights, and errors
+        model_weights, eps, N_eff, resi_mean = self.estimate_model_weights(X, return_errors=True, kernel_range=kernel_range)
+
+        # Get model predictions
+        def Q(x):
+            return np.vstack([qm.predict(x) for qm in self.quadratic_models])
+
+        # Gets a n_models x p matrix with quadratic of model i on observation x_j
+        model_means = np.hstack([Q(X[:,j]) for j in xrange(p)])
+
+        # Correct for bias
+        a = (N_eff / (self.bias_lambda + N_eff))[np.newaxis,:] * resi_mean
+        model_means -= a
+        
+        return model_means
+
     def predict(self, X, bool_weights=False, kernel_range=-1.0):
         """
         Predictions without calculating explained variance
@@ -1047,11 +707,15 @@ class QuadraticBMAProcess(object):
             kernel_range = self.kernel_range
 
         # Get model weights
-        model_weights = self.estimate_model_weights(X, kernel_range=kernel_range)
+        model_weights, eps, N_eff, resi_mean = self.estimate_model_weights(X, kernel_range=kernel_range, return_errors=True)
 
         model_means = self.model_predictions(X) 
-        # multiply by model weights to get prediction
 
+        # Correct for biases
+        a = (N_eff / (self.bias_lambda + N_eff))[np.newaxis,:] * resi_mean
+        model_means -= a        
+
+        # multiply by model weights to get prediction
         bma_mean = np.sum(np.multiply(model_weights, model_means), axis = 0)
 
         disagreement = np.sum(np.multiply(model_weights, np.square(model_means)), axis = 0) - np.square(bma_mean)
@@ -1085,10 +749,14 @@ class QuadraticBMAProcess(object):
         # Minimum N_eff to prevent dividing by zero
         soft_N_eff = 10e-8
 
-        model_weights, errors, N_eff = self.estimate_model_weights(X, return_errors=True, kernel_range=kernel_range)
+        model_weights, eps, N_eff, resi_mean = self.estimate_model_weights(X, return_errors=True, kernel_range=kernel_range)
 
         N_eff = N_eff+soft_N_eff  # Update soft minimum for sample size
         model_means = self.model_predictions(X)  # Individual model predictions
+
+        # Correct for bias
+        a = (N_eff / (self.bias_lambda + N_eff))[np.newaxis,:] * resi_mean
+        model_means -= a        
         
         # Get prediction means over the models via weighted average.
         bma_mean = np.sum(np.multiply(model_weights, model_means), axis = 0)
@@ -1102,8 +770,9 @@ class QuadraticBMAProcess(object):
         alpha_n = self.precision_alpha+0.5*N_eff
         prefactor = np.divide(2*alpha_n, 2*alpha_n-2)
         divfactor = alpha_n
-        postfactor = (self.precision_beta+0.5*errors) / divfactor[None,:]
-        model_unc = postfactor * prefactor[None,:]
+        lamfactor = 1. + 1./(self.bias_lambda + N_eff)
+        postfactor = (self.precision_beta+0.5*eps) / divfactor[None,:]
+        model_unc = postfactor * lamfactor * prefactor[None,:]
         bma_unc = np.sum(np.multiply(model_weights, model_unc), axis = 0)
         exp_std = np.sqrt(bma_unc)
 
@@ -1131,18 +800,26 @@ class QuadraticBMAProcess(object):
             kernel_range = self.kernel_range
 
         # Get model weights, and errors
-        model_weights, errors, N_eff = self.estimate_model_weights(X, return_errors=True, kernel_range=kernel_range)
+        model_weights, eps, N_eff, resi_mean = self.estimate_model_weights(X, return_errors=True, kernel_range=kernel_range)
 
         if bool_dataless:
-            errors *= 0.0
-            N_eff *= 0.0
+            n = len(self.quadratic_models)
+            p = X.shape[1]
+            eps = np.zeros([n, p])
+            N_eff = np.zeros([p])
+            resi_mean = np.zeros([n, p])
 
         # Get the model means (n_model x p)
         model_means = self.model_predictions(X)
         
+        # Calculate bias correction
+        a = (N_eff / (self.bias_lambda + N_eff))[np.newaxis,:] * resi_mean
+        model_means -= a
+
         # Get the t distribution scale parameter (sigma^2)
-        divfactor = (self.precision_alpha+0.5*N_eff)
-        postfactor = (self.precision_beta+0.5*errors) / divfactor[None,:]
+        divfactor = self.precision_alpha+0.5*N_eff
+        lamfactor = 1. + 1./(self.bias_lambda + N_eff)
+        postfactor = (self.precision_beta+0.5*eps) * lamfactor[None,:] / divfactor[None,:]
         
         # Sigma for the student t posterior distributions are postfactor square root
         sigma = np.sqrt(postfactor)
@@ -1163,7 +840,24 @@ class QuadraticBMAProcess(object):
         else:
             return bma_probs
 
-    def predict_bayesian(self, X, return_likelihoods=False):
+    def get_KL(self, X, kernel_range=-1.):
+        if kernel_range == -1.0:
+            kernel_range = self.kernel_range
+
+        # Minimum N_eff to prevent dividing by zero
+        soft_p = 1e-8
+
+        model_weights = self.estimate_model_weights(X, return_errors=False, kernel_range=kernel_range)
+
+        H = -np.sum(np.multiply(model_weights, np.log(model_weights+soft_p)), axis=0)
+
+        model_priors = self.estimate_model_priors(X, kernel_range=kernel_range)
+
+        H_prior = -np.sum(np.multiply(model_weights, np.log(model_priors+soft_p)), axis=0)
+
+        return H_prior - H
+
+    def predict_bayesian(self, X, return_likelihoods=False, return_H=False):
         ### Only works for gamma prior on the kernel range
 
         p = X.shape[1]
@@ -1174,7 +868,7 @@ class QuadraticBMAProcess(object):
         alpha = self.kernel_prior.get_alpha()
                 
         # rescale roots
-        kernel_ranges = self.roots / beta
+        kernel_ranges = self.lg_roots / beta
 
         # (n_int x p matrix) of the different kernel ranges for each location
         naive_logs = []
@@ -1183,16 +877,21 @@ class QuadraticBMAProcess(object):
         unexp_std = []
         exp_std = []
         n_eff = []
+        if return_H:
+            H = []
         log_priors = []
 
         for kernel_range in kernel_ranges:
             naive_logs.append(self.log_naive_local_pdf(X, kernel_range))
             # Get the prediction at this kernel range
-            m, u, e, n = self.predict_with_unc(X, kernel_range=kernel_range)
+            m, u, e, n = self.predict_with_unc(X, kernel_range=kernel_range)            
             means.append(m)
             unexp_std.append(u)
             exp_std.append(e)
             n_eff.append(n)
+            if return_H:
+                h = self.get_KL(X, kernel_range=kernel_range)
+                H.append(h)
             # Get the prior probabilties of this kernel_range value
             log_priors.append(self.kernel_prior.logpdf(kernel_range))
 
@@ -1202,6 +901,8 @@ class QuadraticBMAProcess(object):
         unexp_std = np.vstack(unexp_std)
         exp_std = np.vstack(exp_std)
         n_eff = np.vstack(n_eff)
+        if return_H:
+            H = np.vstack(H)
         log_priors = np.array(log_priors)
 
         # Note, prior values can be kept as a vector
@@ -1218,7 +919,7 @@ class QuadraticBMAProcess(object):
         #normalization = self.weights.dot(naive_likelihoods)
 
         # Renormalized weights
-        log_posterior = np.log(self.weights[:, None]) + naive_logs # + log_priors[:, None]
+        log_posterior = np.log(self.lg_weights[:, None]) + naive_logs # + log_priors[:, None]
         log_normalization = scipy.misc.logsumexp(log_posterior, axis=0)
         log_posterior -= log_normalization[None, :]
         
@@ -1241,28 +942,14 @@ class QuadraticBMAProcess(object):
         bayesian_unexp_std = integrate(unexp_std)
         bayesian_exp_std = integrate(exp_std)
         bayesian_n_eff = integrate(n_eff)
+        if return_H:
+            bayesian_H = integrate(H)
         avg_kernel_ranges = integrate(kernel_ranges)
 
-        """
-        bayesian_means = []
-        bayesian_unexp_std = []
-        bayesian_exp_std = []
-        bayesian_n_eff = []
-
-        for k in xrange(p):
-            kernel_range = avg_kernel_ranges[k]
-            Z = self.predict_with_unc(np.array([X[:,k]]).T, kernel_range=kernel_range)
-            bayesian_means.append(Z[0,0])
-            bayesian_unexp_std.append(Z[1,0])
-            bayesian_exp_std.append(Z[2,0])
-            bayesian_n_eff.append(Z[3,0])
-            
-        bayesian_means = np.array(bayesian_means)
-        bayesian_unexp_std = np.array(bayesian_unexp_std)
-        bayesian_exp_std = np.array(bayesian_exp_std)
-        bayesian_n_eff = np.array(bayesian_n_eff)
-        """
-        return_val = np.vstack([bayesian_means, bayesian_unexp_std, bayesian_exp_std, bayesian_n_eff])
+        if return_H:
+            return_val = np.vstack([bayesian_means, bayesian_unexp_std, bayesian_exp_std, bayesian_n_eff, bayesian_H])
+        else:
+            return_val = np.vstack([bayesian_means, bayesian_unexp_std, bayesian_exp_std, bayesian_n_eff])
 
         #normalized_likelihoods = np.divide(naive_likelihoods, normalization[None, :])
         #full_likelihoods = np.exp(np.log(normalized_likelihoods)+log_priors[:, None])
@@ -1271,7 +958,7 @@ class QuadraticBMAProcess(object):
         #full_likelihoods = np.exp((np.log(self.weights[:, None]) + naive_logs) - naive_logs)
         full_likelihoods = np.exp(log_posterior)
 
-        normalized_priors = self.weights/np.sum(self.weights)
+        normalized_priors = self.lg_weights/np.sum(self.lg_weights)
 
         if return_likelihoods == True:
             
@@ -1307,9 +994,9 @@ class QuadraticBMAProcess(object):
         q = X_data.shape[1]
         p = X_eval.shape[1]
 
-        model_weights, errors, N_eff, marginal_likelihoods = self.estimate_model_weights(X_eval, return_likelihoods=True, kernel_range=kernel_range)
-        log_marginal_likelihoods = np.log(marginal_likelihoods)
-        log_prior = self.estimate_log_model_priors(X_eval)
+        model_weights, errors, N_eff, resi_mean, marginal_likelihoods = self.estimate_model_weights(X_eval, return_likelihoods=True, kernel_range=kernel_range)
+        log_marginal_likelihoods = np.log(marginal_likelihoods+1e-16)
+        log_prior = self.estimate_log_model_priors(X_eval, kernel_range)
         # Add logs
         logsum = log_prior + log_marginal_likelihoods
         # Then sum exp log over the models (axis=0)
@@ -1343,7 +1030,7 @@ class QuadraticBMAProcess(object):
             return np.vstack([qm.predict(x) for qm in self.quadratic_models])
 
         # Get the n_models x p matrix of log model priors
-        log_prior = self.estimate_log_model_priors(X)
+        log_prior = self.estimate_log_model_priors(X, kernel_range)
 
         # gets a n_models x q matrix with quadratic of model i on observation x_j
         model_means_at_X = np.hstack([Q(X[:,i]) for i in xrange(p)])
@@ -1701,6 +1388,17 @@ class EnrichedQuadraticBMAProcess(object):
         """
         self.bma.set_precision_prior_params(precision_alpha, precision_beta)
 
+    def set_bias_prior_params(self, bias_lambda):
+        """
+        Setter for the bias parameters. The bias prior is a normal gamma
+        related to the precision prior
+        
+        args:
+        -----
+        bias_lambda  : (scalar) lambda value
+        """
+        self.bma.set_bias_prior_params(bias_lambda)
+
     def add_observation(self, x, f, g, H):
         """ Add an observation at x with uspecified error
 
@@ -1770,11 +1468,11 @@ class EnrichedQuadraticBMAProcess(object):
         """
         return self.bma.predict_with_unc(X)
 
-    def predict_bayesian(self, X):
+    def predict_bayesian(self, X, return_H=False):
         """
         Full Bayesian prediction, integrating over the kernel range
         """
-        return self.bma.predict_bayesian(X)
+        return self.bma.predict_bayesian(X, return_H=return_H)
 
     def set_kernel_range(self, kernel_range):
         """
@@ -1805,6 +1503,9 @@ class EnrichedQuadraticBMAProcess(object):
 
     def calculate_N_eff_bayesian(self, X):
         return self.bma.predict_bayesian(X)[3,:]
+
+    def calculate_KL_bayesian(self, X):
+        return self.bma.predict_bayesian(X, return_H=True)[4,:]
 
     def calculate_discounted_mean(self, X, kappa=0.1):
         """ 

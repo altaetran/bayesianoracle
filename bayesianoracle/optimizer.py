@@ -22,6 +22,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
                  min_trust=0.01,
                  precision_alpha=2.0,
                  precision_beta=10.0,
+                 bias_lambda=1.0,
                  bool_sample_low_density=False,
                  bool_exploration=True,
                  verbose=True):
@@ -68,6 +69,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         self.precision_alpha = precision_alpha
         self.precision_beta = precision_beta
         self.set_precision_prior_params(precision_alpha, precision_beta)
+        self.set_bias_prior_params(bias_lambda)
 
         self.init_kernel_range = init_kernel_range
         self.min_trust = min_trust
@@ -79,7 +81,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             # Use default variance of 25% of init_kernel_rnage
             # init_kernel_var = init_kernel_range*0.25
             # Use default of setting alpha = 3 and determinig scale
-            alpha = 3.0
+            alpha = 2.0
             beta = alpha / init_kernel_range
             init_kernel_var = alpha / beta**2
 
@@ -104,7 +106,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         # Number of iterations with detail points "nearby" above which an
         # exploration step will be taken
         self.thresh_factor = 0.05 # Percetage of current kernel to warrant a "close step"
-        self.num_near_thresh = 3
+        self.num_near_thresh = 2
 
         self.bool_sample_low_density = bool_sample_low_density
         self.bool_exploration = bool_exploration
@@ -219,23 +221,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             print("BayesianOracle>> number of iterations with small steps relative to kernel width: " + str(num_near))
             print("")
 
-        if not self.bool_exploration:
-            self.phase = 'detail'
-        elif self.bool_sample_low_density:
-            if num_near < self.num_near_thresh:
-                self.phase = 'detail'
-            elif self.prev_phase == 'detail':
-                self.phase = 'exploration'
-            elif self.prev_phase == 'exploration':
-                self.phase = 'low_density'
-            else:
-                self.phase = 'detail'
-        else:
-            if num_near < self.num_near_thresh:
-                self.phase = 'detail'
-            elif self.prev_phase == 'detail':
-                self.phase = 'exploration'
-            elif self.prev_phase == 'exploration':
+
+        self.phase = 'detail'
+        if num_near > self.num_near_thresh:
+            if self.prev_phase == 'detail':
+                self.phase = 'low_KL'
+            elif self.prev_phase == 'low_KL':
                 self.phase = 'detail'
 
         self.iteration += 1
@@ -251,10 +242,10 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
             if self.verbose:
                 print("BayesianOracle>> requesting EXPLORATION point")
             return self.locate_exploration_point(bool_return_fval)
-        else:
+        elif self.phase == 'low_KL':
             if self.verbose:
-                print("BayesianOracle>> requesting RANDOM LOW DENSITY point")
-            return self.locate_low_density_point(bool_return_fval)
+                print("BayesianOracle>> requesting LOW KL point")
+            return self.locate_low_KL_point(bool_return_fval)
 
     def get_prev_phase(self):
         return self.prev_phase
@@ -265,6 +256,12 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
 
         return self.locate_acquisition_point(trust_radius=self.trust_low_density, fun=fun, bool_return_fval=bool_return_fval)
 
+    def locate_low_KL_point(self, bool_return_fval=False):
+        def fun(X):
+            return self.calculate_KL_bayesian(X)
+
+        return self.locate_acquisition_point(trust_radius=self.trust_low_density, fun=fun, bool_return_fval=bool_return_fval)
+    
     def locate_exploration_point(self, bool_return_fval=False):
         def fun(X):
             return self.calculate_discounted_mean(X, self.kappa_explore)
@@ -404,11 +401,11 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         if not (self.x_min_hist is None):
             X_search = np.hstack([X_search, self.x_min_hist])
 
-        # Minimize discounted means over the randomly selected points
-        discounted_means = fun(X_search)
-        j_min = np.argmin(discounted_means)
+        # Minimize fun over the randomly selected points
+        X_search_fun = fun(X_search)
+        j_min = np.argmin(X_search_fun)
         x_search = X_search[:, j_min]
-        X_min = discounted_means[j_min]
+        X_min = X_search_fun[j_min]
 
         def trust_check(x):
             # Trust to any point in 
@@ -456,7 +453,7 @@ class QuadraticBMAOptimizer(process_objects.EnrichedQuadraticBMAProcess):
         print("BayesianOracle>> " + str(x_final))
 
         # Get information about the current location
-        m, u, s, n = self.predict_bayesian(np.array([x_final]).T)
+        m, u, s, n, h = self.predict_bayesian(np.array([x_final]).T, return_H=True)
         print("BayesianOracle>> mean: %.5f," %m + 
               " unexplained std: %.5f" %u + 
               " explained std: %.5f," %s + 

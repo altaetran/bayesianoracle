@@ -1,10 +1,12 @@
 import numpy as np
 import scipy
 import matplotlib.pyplot as plt
-
+import matplotlib as mpl
+from itertools import cycle
 from matplotlib.collections import LineCollection
 from matplotlib import colors as colors
 from matplotlib import gridspec, markers, ticker
+from cycler import cycler
 
 class Plotter1D(object):
     def __init__(self,
@@ -40,7 +42,7 @@ class Plotter1D(object):
         self.model_predictions = bma.model_predictions(self.x_grid)
         self.n_models = len(bma.quadratic_models)
 
-    def plot_fun(self, ax, fun, alpha=0.7, linestyle='--', xlabel=r'$x$', ylabel=None):
+    def plot_fun(self, ax, fun, alpha=0.7, linestyle='--', xlabel=r'$x$', ylabel=None, color='k'):
         """ Plots the function, fun, along the x range 
 
         Parameters
@@ -60,7 +62,7 @@ class Plotter1D(object):
         # Plot function
         func_line, = ax.plot(self.x_plot, F)
         # Set line properties 
-        plt.setp(func_line, color='black', linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
+        plt.setp(func_line, color=color, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
                  dash_capstyle='round')
 
         # Set range
@@ -74,7 +76,7 @@ class Plotter1D(object):
 
         return func_line
 
-    def plot_data(self, ax, X=None, y=None, color='black', alpha=0.5, xlabel=r'$x$', ylabel=None, bool_color_cycled=False):
+    def plot_data(self, ax, X=None, y=None, color='black', edgecolor='black', alpha=0.5, xlabel=r'$x$', ylabel=None, bool_color_cycled=False):
         # Set current plt axis to ax
         plt.sca(ax)
 
@@ -85,18 +87,20 @@ class Plotter1D(object):
 
         if bool_color_cycled:
             # Set color cycle
-            ax._get_lines.set_color_cycle(self.colorcycle)
+            #ax._get_lines.set_color_cycle(self.colorcycle)
+            ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
             # Get an actual color cycle oject
-            color_cycle = ax._get_lines.color_cycle
+            #color_cycle = iter([color['color'] for color in list(mpl.rcParams['ax._get_lines.prop_cycle'])])
+            color_cycle = cycle(iter(self.colorcycle))
             
             for i in xrange(X.shape[1]):
                 cur_color = next(color_cycle)
-                ax.scatter(X[:,i], y[i], s=100.0, color=cur_color, alpha=alpha, zorder=3)
+                ax.scatter(X[:,i], y[i], s=100.0, color=cur_color, alpha=alpha, zorder=3, edgecolors=edgecolor)
                 
             # Figure legend object
-            scat = ax.scatter(-1e100, 1e100, s=100.0, c=color, alpha=alpha, zorder=1, facecolors='none')
+            scat = ax.scatter(-1e100, 1e100, s=100.0, c=color, alpha=alpha, zorder=1, facecolors='none', edgecolors=edgecolor)
         else:
-            scat = ax.scatter(X, y, s=100.0, c=color, alpha=alpha, zorder=3)
+            scat = ax.scatter(X, y, s=100.0, c=color, alpha=alpha, zorder=3, edgecolors=edgecolor)
 
         # Set range
         plt.ylim([self.y_min, self.y_max])
@@ -148,9 +152,10 @@ class Plotter1D(object):
 
         if bool_color_cycled:
             # Set color cycle
-            ax._get_lines.set_color_cycle(self.colorcycle)
+            ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
             # Get an actual color cycle oject
-            color_cycle = ax._get_lines.color_cycle
+            color_cycle = cycle(iter(self.colorcycle))
+            #color_cycle = iter([color['color'] for color in list(mpl.rcParams['ax._get_lines.prop_cycle'])])
             
             for i in xrange(X.shape[1]):
                 cur_color = next(color_cycle)
@@ -193,9 +198,10 @@ class Plotter1D(object):
 
         if bool_color_cycled:
             # Set color cycle
-            ax._get_lines.set_color_cycle(self.colorcycle)
+            ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
             # Get an actual color cycle oject
-            color_cycle = ax._get_lines.color_cycle
+            color_cycle = cycle(iter(self.colorcycle))
+            #color_cycle = iter([color['color'] for color in list(mpl.rcParams['ax._get_lines.prop_cycle'])])
 
             # Plot vertical lines
             for i in xrange(X.shape[1]):
@@ -236,14 +242,36 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
-        ax.set_xlabel(xlabel)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
 
         return func_line
 
     def plot_model_mean(self, ax, model_ind, alpha=1.0, color='magenta', linestyle='-', xlabel=r'$x$'):
         return self.plot_quad(ax, self.bma.quadratic_models[model_ind], alpha=alpha, color=color, linestyle=linestyle, xlabel=xlabel)
 
-    def plot_model(self, ax, model_ind, kernel_range=-1, bool_dataless=False, alpha=1.0, color='magenta', linestyle='--', xlabel=r'$x$'):
+    def plot_biased_model_mean(self, ax, model_ind, kernel_range=-1, alpha=1.0, color='magenta', linestyle='-', xlabel=r'$x$'):
+        # Set current plt axis to ax
+        plt.sca(ax)
+
+        F = self.bma.model_biased_predictions(self.x_grid, kernel_range)[model_ind,:]
+
+        # Plot function
+        func_line, = ax.plot(self.x_plot, F)
+        # Set line properties 
+        plt.setp(func_line, color=color, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
+                 dash_capstyle='round')
+
+        # Set range
+        plt.ylim([self.y_min, self.y_max])
+        plt.xlim([self.x_min, self.x_max])
+
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+
+        return func_line
+
+    def plot_model(self, ax, model_ind, kernel_range=-1, bool_dataless=False, alpha=1.0, color='magenta', linestyle='--', xlabel=r'$x$', bool_colorbar=True, upper=None):
         # Set current plt axis to ax
         plt.sca(ax)
 
@@ -266,37 +294,46 @@ class Plotter1D(object):
                 model_probs_mesh = np.vstack([model_probs_mesh, model_prob])
                 
         # Create custom colormap from white to color
-        #colormap = colormap_fade_buffer('white', color)
-        colormap = colormap_fade_buffer(color,'white')                
+        colormap = colormap_fade_buffer('white', color)
+        #colormap = colormap_fade_buffer(color, 'white')
 
         # Contour plot
-        upper = np.ceil(np.max(model_probs_mesh)*10.0)/10.0
+        if upper is None:
+            upper = np.ceil(np.max(model_probs_mesh)*10.0)/10.0
 
-        # Create levels with 5 levels total
-        v = np.linspace(0.00, upper, 6, endpoint=True)
+        # Create levels with 10 levels total
+        v = np.linspace(0, upper, 6, endpoint=True)
         heatmap = plt.contourf(x_mesh, y_mesh, model_probs_mesh, v, cmap=colormap)
+        #exp_min = -6
+        #v = np.logspace(exp_min, np.log10(0.5), 6, endpoint=True)
+        #heatmap = plt.contourf(x_mesh, y_mesh, np.maximum(model_probs_mesh, 10**exp_min), v, cmap=colormap, locator=ticker.LogLocator())
 
         # Set range
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
         # Get the horizontal colorbar
-        cbar = plt.colorbar(heatmap, orientation='horizontal', pad=0.1)
-        cbar.ax.set_xlabel('probability')
-        tick_locator = ticker.MaxNLocator(nbins=5)
-        cbar.locator = tick_locator
-        cbar.update_ticks()
+        if bool_colorbar:
+            cbar = plt.colorbar(heatmap, orientation='horizontal', pad=0.1)
+            cbar.ax.set_xlabel('probability')
+            tick_locator = ticker.MaxNLocator(nbins=5)
+            cbar.locator = tick_locator
+            cbar.update_ticks()
 
-        ax.set_xlabel(xlabel)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel)
+
+        return heatmap
 
     def get_bayesian_bma_evals(self):
-        Z_rolled, kernel_ranges, likelihoods, avg_kernel_ranges, normalized_priors, integrated_relevance_weights = self.bma.predict_bayesian(self.x_grid, return_likelihoods=True)
+        Z_rolled, kernel_ranges, likelihoods, avg_kernel_ranges, normalized_priors, integrated_relevance_weights = self.bma.predict_bayesian(self.x_grid, return_likelihoods=True, return_H=True)
 
         # Save the predictions
         self.bayesian_means = Z_rolled[0,:]
         self.bayesian_unexp_std = Z_rolled[1,:]
         self.bayesian_exp_std = Z_rolled[2,:]
         self.bayesian_N_eff = Z_rolled[3,:]
+        self.bayesian_KL = Z_rolled[4,:]
         self.bayesian_kernel_ranges = kernel_ranges
         self.bayesian_likelihoods = likelihoods
         self.bayesian_avg_kernel_ranges = avg_kernel_ranges
@@ -311,13 +348,20 @@ class Plotter1D(object):
         if kernel_range == -1.0:
             # Use built in kernel range
             Z_rolled = self.bma.predict_with_unc(self.x_grid)
-            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True)
+            model_weights, errors, N_eff, resi_mean, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True)
             kernel_weights = self.bma.calc_kernel_weights(self.x_grid)
+            self.pointwise_model_biased_predicftions = self.bma.model_biased_predictions(self.x_grid, kernel_range=kernel_range)
+            self.kernel_range = -1.
         else:
             # Otherwiuse use given kernel range
             Z_rolled = self.bma.predict_with_unc(self.x_grid, kernel_range=kernel_range)
-            model_weights, errors, N_eff, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True, kernel_range=kernel_range)
+            model_weights, errors, N_eff, resi_mean, marginal_likelihoods = self.bma.estimate_model_weights(self.x_grid, return_likelihoods=True, kernel_range=kernel_range)
             kernel_weights = self.bma.calc_kernel_weights(self.x_grid, kernel_range=kernel_range)
+            self.pointwise_model_biased_predictions = self.bma.model_biased_predictions(self.x_grid, kernel_range=kernel_range)
+            self.kernel_range = kernel_range
+
+        # Get log_model_priors
+        self.pointwise_log_model_priors = self.bma.estimate_log_model_priors(self.x_grid, kernel_range)
 
         # Unroll and save
         self.pointwise_means = Z_rolled[:,0]
@@ -332,11 +376,9 @@ class Plotter1D(object):
         self.pointwise_model_weights = model_weights
         self.pointwise_errors = errors
         self.pointwise_N_eff = N_eff
+        self.pointwise_resi_mean = resi_mean
         self.pointwise_marginal_likelihoods = marginal_likelihoods
         self.pointwise_kernel_weights = kernel_weights
-
-        # Get log_model_priors
-        self.pointwise_log_model_priors = self.bma.estimate_log_model_priors(self.x_grid)
 
     def plot_means(self, ax, bool_bayesian=True, alpha=0.7, xlabel=r'$x$'):
         if bool_bayesian:
@@ -355,7 +397,8 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
-        ax.set_xlabel(xlabel, fontsize=12)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12)
 
         return func_line
 
@@ -379,7 +422,8 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
-        ax.set_xlabel(xlabel, fontsize=12)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12)
 
         return func_line
 
@@ -412,7 +456,8 @@ class Plotter1D(object):
         plt.ylim([self.y_min, self.y_max])
         plt.xlim([self.x_min, self.x_max])
 
-        ax.set_xlabel(xlabel, fontsize=12)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12)
 
         # Create items for use as legend
         exp_fill = plt.Rectangle((0, 0), 1, 1, fc=exp_color, alpha=0.5)
@@ -421,7 +466,7 @@ class Plotter1D(object):
 
         return exp_fill, unexp_fill, std_fill
         
-    def plot_bayesian_likelihoods(self, ax, bool_posterior=True, bool_colorbar=True, xlabel=r'$x$', ylabel='kernel range', color='#663300', kernel_ranges_range=[1.0e-2,1.0e1], colorbarlabel='probability'):
+    def plot_bayesian_likelihoods(self, ax, bool_posterior=True, bool_colorbar=True, mean_color='k', xlabel=r'$x$', ylabel='kernel range', color='#663300', kernel_ranges_range=[1.0e-2,1.0e1], colorbarlabel='probability', title=None, upper=None):
         # Set current plt axis to ax
         plt.sca(ax)
 
@@ -445,8 +490,10 @@ class Plotter1D(object):
             padded_likelihoods = np.insert(padded_likelihoods, -1, 0.0, axis=0)            
 
         colormap = colormap_fade_buffer('white', color) 
-
-        upper = np.ceil(np.max(padded_likelihoods)*10.0)/10.0
+        
+        if upper is None:
+            upper = np.ceil(np.max(padded_likelihoods)*10.0)/10.0
+            
         v = np.linspace(0.00, upper, 11, endpoint=True)
         # Plot the countour
         heatmap = ax.contourf(self.x_plot, padded_kernel_ranges, padded_likelihoods, v, cmap=colormap)
@@ -461,7 +508,8 @@ class Plotter1D(object):
             ax.set_xlabel(xlabel, multialignment='center')
         if ylabel is not None:
             ax.set_ylabel(ylabel, multialignment='center')
-
+        if title is not None:
+            ax.set_title(title, multialignment='center', y=1.05)
         # Get the horizontal colorbar if said
         if bool_colorbar:
             cbar = plt.colorbar(heatmap, orientation='horizontal', pad=0.1)
@@ -474,7 +522,7 @@ class Plotter1D(object):
         plt.sca(ax)
 
         # Set colorcylce
-        ax._get_lines.set_color_cycle(self.colorcycle)
+        ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
 
         # Plot the average kernel range
         p_line, = ax.plot(self.x_plot, self.bayesian_avg_kernel_ranges)
@@ -482,16 +530,19 @@ class Plotter1D(object):
                  dash_capstyle='round')
 
         # Plot range
+        ax.set_yscale('log')
         plt.xlim([self.x_min, self.x_max])
         plt.ylim(kernel_ranges_range)
 
         # Set labels
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12, multialignment='center')
+        if ylabel is not None:
+            ax.set_ylabel(ylabel, fontsize=12, multialignment='center')
 
         return p_line
 
-    def plot_N_eff(self, ax, bool_bayesian=True, alpha=0.7, xlabel=r'$x$', ylabel='N_eff'):
+    def plot_N_eff(self, ax, bool_bayesian=True, alpha=0.7, xlabel=r'$x$', ylabel=r'$\mathbf{E}_{\gamma\mid \mathcal{D}}\left[N_{\gamma}(x)\right]$'):
         if bool_bayesian:
             N_eff = self.bayesian_N_eff
         else:
@@ -508,22 +559,54 @@ class Plotter1D(object):
         plt.ylim([0.0, np.max(N_eff)])
         plt.xlim([self.x_min, self.x_max])
 
-        ax.set_xlabel(xlabel, fontsize=12)
-        ax.set_ylabel(ylabel, fontsize=12)
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12, multialignment='center')
+        if ylabel is not None:
+            ax.set_ylabel(ylabel, fontsize=12, multialignment='center')
 
         return N_eff_line
+
+    def plot_KL(self, ax, bool_bayesian=True, alpha=0.7, xlabel=r'$x$', ylabel=r'$D_x$', color='k', linestyle='-', upper=None):
+        if bool_bayesian:
+            KL = self.bayesian_KL
+        else:
+            KL = self.pointwise_KL
+
+        # Set current plt axis to ax
+        plt.sca(ax)
+            
+        KL_line, = ax.plot(self.x_plot, KL)
+        # Set line properties 
+        plt.setp(KL_line, color=color, linewidth=self.global_linewidth, alpha=alpha, linestyle=linestyle,
+                 dash_capstyle='round')
+
+        # Set range
+        if upper is None:
+            upper = np.max(KL)
+        plt.ylim([0.0, upper])
+        plt.xlim([self.x_min, self.x_max])
+
+        if xlabel is not None:
+            ax.set_xlabel(xlabel, fontsize=12, multialignment='center')
+        if ylabel is not None:
+            ax.set_ylabel(ylabel, fontsize=12, multialignment='center')
+
+        return KL_line
 
     def plot_models(self, ax, alpha=0.7, linestyle='-'):
         # Set current plt axis to ax
         plt.sca(ax)
 
         # For the plotting, we will use the current colorcycle
-        ax.set_color_cycle(self.colorcycle)
+        ax.set_prop_cycle(cycler('color', self.colorcycle))
 
         lines = []
 
-        for i in range(self.n_models):
-            model_predictions = self.bma.model_predictions(self.x_grid)
+        # Get model predictions
+        model_predictions = self.bma.model_predictions(self.x_grid)
+
+        # Plot the model predictions
+        for i in range(self.n_models):            
             line, = ax.plot(self.x_plot, model_predictions[i,:])
 
             # Set line properties for the quadratic line
@@ -552,7 +635,7 @@ class Plotter1D(object):
         plt.sca(ax)
 
         # Set colorcylce
-        ax._get_lines.set_color_cycle(self.colorcycle)
+        ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
 
         prior_lines = []
 
@@ -590,7 +673,7 @@ class Plotter1D(object):
         plt.sca(ax)
 
         # Set colorcylce
-        ax._get_lines.set_color_cycle(self.colorcycle)
+        ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
 
         posterior_lines = []
 
@@ -614,7 +697,7 @@ class Plotter1D(object):
 
         return posterior_lines
 
-    def plot_marginal_likelihoods(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', xlabel=None, ylabel='marginal likelihoods'):
+    def plot_marginal_likelihoods(self, ax, bool_bayesian=False, alpha=1.0, linestyle='-', xlabel=None, ylabel='marginal likelihoods', y_range=None):
         # Get the model priors
         if bool_bayesian:
             marginal_likelihoods = self.bayesian_marginal_likelihoods
@@ -625,7 +708,7 @@ class Plotter1D(object):
         plt.sca(ax)
 
         # Set colorcycle
-        ax._get_lines.set_color_cycle(self.colorcycle)
+        ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
 
         marginal_likelihood_lines = []
 
@@ -639,9 +722,14 @@ class Plotter1D(object):
         # Use log scale
         ax.set_yscale('log')
         # Set number of ticks
-        up = 0
-        lb = np.floor(np.min(np.log10(marginal_likelihoods)))
-        ax.set_yticks(np.logspace(lb, up, num=5))
+        if y_range is None:
+            ub = 0
+            lb = np.floor(np.min(np.log10(marginal_likelihoods)))
+        else:
+            lb = np.log10(y_range[0])
+            ub = np.log10(y_range[1])
+
+        ax.set_yticks(np.logspace(lb, ub, num=5))
         # Set minor ticks off
         plt.minorticks_off()
 
@@ -656,7 +744,7 @@ class Plotter1D(object):
 
         return marginal_likelihood_lines
 
-    def plot_kernel_weights(self, ax, bool_bayesian=False, alpha=0.35, xlabel=None, ylabel='effective sample size'):
+    def plot_kernel_weights(self, ax, bool_bayesian=False, alpha=0.35, xlabel=None, ylabel='effective sample size', y_range=None):
         # Get the model priors
         if bool_bayesian:
             kernel_weights = self.integrated_relevance_weights
@@ -671,13 +759,16 @@ class Plotter1D(object):
         cumulant = N_eff*0.0
 
         for i in range(self.n_models):
-            color = self.colorcycle[i]
+            color = self.colorcycle[i%len(self.colorcycle)]
             ax.fill_between(self.x_plot, cumulant, cumulant+kernel_weights[i,:], facecolor=color, interpolate=True, alpha=alpha)
             # Add to the cumulant
             cumulant += kernel_weights[i,:]
 
         # Plot range
-        plt.ylim([0.0, np.max(cumulant)])
+        if y_range is None:
+            plt.ylim([0.0, np.max(cumulant)])
+        else:
+            plt.ylim(y_range)
         plt.xlim([self.x_min, self.x_max])
 
         # Set labels
@@ -692,25 +783,31 @@ class Plotter1D(object):
                                       model_linestyle='-', model_alpha=0.7):
         if weight_type == 'posterior':
             weights = self.pointwise_model_weights
+            y_all = self.pointwise_model_biased_predictions
+
         elif weight_type == 'prior':
             weights = np.exp(self.pointwise_log_model_priors)
+            y_all = self.model_predictions
 
         # Set current plt axis to ax
         plt.sca(ax)
 
         # For the plotting, we will use the current colorcycle
-        ax._get_lines.set_color_cycle(self.colorcycle)
+        ax._get_lines.set_prop_cycle(cycler('color', self.colorcycle))
         # Get an actual color cycle oject
-        color_cycle = ax._get_lines.color_cycle
+        color_cycle = cycle(iter(self.colorcycle))
+        #color_cycle = iter([color['color'] for color in list(mpl.rcParams['ax._get_lines.prop_cycle'])])
+
+        # Get the plottable x
+        x = self.x_plot            
 
         for i in xrange(self.n_models):
             # Max alpha for the plots
             max_alpha = model_alpha
 
             # Cited from http://matplotlib.1069221.n5.nabble.com/Varying-alpha-in-ListedColormap-not-working-td39950.html
-
-            x = self.x_plot
-            y = self.model_predictions[i,:]
+            
+            y = y_all[i,:]
             scaling = weights[i,:]
 
             points = np.array([x, y]).T.reshape(-1, 1, 2)
@@ -762,7 +859,7 @@ class Plotter1D(object):
             ax.add_collection(lc)
 
         # Plot the predictions
-        predictions = np.sum(np.multiply(self.model_predictions, weights),axis=0)
+        predictions = np.sum(np.multiply(y_all, weights),axis=0)
         p_line = plt.plot(self.x_plot, predictions)
         plt.setp(p_line, color=pred_color, linewidth=self.global_linewidth, alpha=pred_alpha, linestyle=pred_linestyle,
                  dash_capstyle='round')
@@ -773,28 +870,28 @@ class Plotter1D(object):
         if ylabel is not None:
             ax.set_ylabel(ylabel, multialignment='center')
 
-    def plot_next(self, ax, x_next, y_next, edgecolor='magenta', facecolor='black', edgealpha=0.9, facealpha=0.7, markersize=200):
+    def plot_next(self, ax, x_next, y_next, edgecolor='magenta', facecolor='black', edgealpha=0.9, facealpha=0.7, markersize=200, linewidth=2):
         # Set current plt axis to ax
         plt.sca(ax)
 
         # Custom aligned hovering triangle marker
-        verts = list(zip([-0.75, 0.75, 0.0, -0.75, 0.75], [1.4, 1.4, 0.4, 1.4, 1.4]))
+        verts = list(zip([-0.75, 0.75, 0.0, -0.75, 0.75], [2.4, 2.4, 1.4, 2.4, 2.4]))
         # Non hovering triangle marker
         centered_verts = list(zip([-0.75, 0.75, 0.0, -0.75, 0.75], [0.5, 0.5, -0.5, 0.5, 0.5]))
 
         # Create the marker above the y_next value for the face
         ax.scatter(x_next, y_next, s=markersize, edgecolors='none', facecolors=facecolor, alpha=facealpha,
-                   linewidth=0.01*markersize, marker=(verts,0), zorder=3)
+                   linewidth=linewidth, marker=(verts,0), zorder=3)
         
         # Create the marker for the edge
         ax.scatter(x_next, y_next, s=markersize, edgecolors=edgecolor, facecolors='none', alpha=edgealpha,
-                   linewidth=0.01*markersize, marker=(verts,0), zorder=3)
+                   linewidth=linewidth, marker=(verts,0), zorder=3)
 
         # Create imaginary markers for the legend
 
         # Create the marker above the y_next value for the face
         marker = ax.scatter(-1e100, -1e100, s=markersize, edgecolors=edgecolor, facecolors=facecolor, alpha=edgealpha,
-                          linewidth=0.005*markersize, marker=(centered_verts,0), zorder=3)
+                          linewidth=0.5*linewidth, marker=(centered_verts,0), zorder=3)
         
         # return the combined object for the legend
         return marker
