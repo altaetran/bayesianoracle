@@ -30,9 +30,6 @@ def plot(bmao, X, k_fig, x_next, y_next):
     # Number of x points to plot
     num_points = 200
 
-    # Resolution of saved imags
-    dpi=600
-
     # Get the bma
     bma = bmao.bma
 
@@ -50,43 +47,48 @@ def plot(bmao, X, k_fig, x_next, y_next):
     plt.close(fig)
 
     ### Plot the kernel range likelihoods
-    n_subplot = 2
-    fig = plt.figure(figsize=(8, 8), dpi=dpi)
-    gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 1])
+    #n_subplot = 2
+    #fig = plt.figure(figsize=(8, 8), dpi=dpi)
+    #gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 1])
     
     # Create axis array
-    ax = []
-    for i in range(n_subplot):
-        ax.append(plt.subplot(gs[i]))
+    #ax = []
+    #for i in range(n_subplot):
+    #    ax.append(plt.subplot(gs[i]))
 
-    boplt.plot_bayesian_likelihoods(ax[0])
-    boplt.plot_bayesian_avg_kernel_ranges(ax[1])
-    plt.savefig("FullyBayesianBMAO1D_figures/"+str(k_fig)+"_b_likelihoods_.png", dpi=dpi)
-    plt.close(fig)
+    #boplt.plot_bayesian_likelihoods(ax[0])
+    #boplt.plot_bayesian_avg_kernel_ranges(ax[1])
+    #plt.savefig("FullyBayesianBMAO1D_figures/"+str(k_fig)+"_b_likelihoods_.png", dpi=dpi)
+    #plt.close(fig)
 
     ### Plot the bayesian quantities 
-    n_subplot = 2
-    fig = plt.figure(figsize=(8, 8), dpi=dpi)
-    gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 1])
+    n_subplot = 3
+    fig = plt.figure(figsize=(6, 8), dpi=dpi)
+    gs = gridspec.GridSpec(n_subplot, 1, height_ratios=[3, 1, 1])
     
     # Create axis array
     ax = []
     for i in range(n_subplot):
         ax.append(plt.subplot(gs[i]))    
-        
 
-    func_line = boplt.plot_fun(ax[0], fun)
-    mean_line = boplt.plot_means(ax[0])
-    exp_fill, unexp_fill, std_fill = boplt.plot_confidence(ax[0], bool_bayesian=True)
-    boplt.plot_kernel_weights(ax[1], bool_bayesian=True, ylabel='cumulative\n data relevance')
+    func_line = boplt.plot_fun(ax[0], fun, xlabel=None)
+    mean_line = boplt.plot_means(ax[0], xlabel=None)
+    exp_fill, unexp_fill, std_fill = boplt.plot_confidence(ax[0], bool_bayesian=True, xlabel=None)
+    #boplt.plot_kernel_weights(ax[1], bool_bayesian=True, ylabel=r'$N_{\gamma}(x)$')
+    cbar = boplt.plot_bayesian_likelihoods(ax[1], xlabel=None, ylabel=r'$\gamma$', bool_colorbar=False)
+
+    # upper value of KL to plot
+    upper_KL = 0.5
 
     # Plot the acquisition function if prev phase was detail or explore
     if bmao.get_prev_phase() == 'detail':
+        boplt.plot_KL(ax[2], bool_bayesian=True, upper=upper_KL)
+
         kappa = bmao.get_kappa_detail()
-        acq_line = boplt.plot_discounted_means(ax[0], kappa)
+        acq_line = boplt.plot_discounted_means(ax[0], kappa, xlabel=None)
         # Plot points
-        scat = boplt.plot_data(ax[0], bool_color_cycled=True)
-        next = boplt.plot_next(ax[0], x_next, y_next)
+        scat = boplt.plot_data(ax[0], bool_color_cycled=True, xlabel=None)
+        next = boplt.plot_next(ax[0], x_next, y_next, markersize=800)
         legend = plt.legend([exp_fill, unexp_fill, std_fill, mean_line, acq_line, func_line, scat, next], 
                             ['Explained Deviation', 'Unexplained Deviation', 'Total Deviation', 'Estimated Mean Function', 'Acquisition Function', 'True Mean Function', 'Data', 'Next Test Location'], 
                             loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, fancybox=True, shadow=False, scatterpoints=1)
@@ -95,11 +97,13 @@ def plot(bmao, X, k_fig, x_next, y_next):
         plt.setp(legend.get_texts(), fontsize=8)
 
     elif bmao.get_prev_phase() == 'exploration':
+        boplt.plot_KL(ax[2], bool_bayesian=True, upper=upper_KL)
+
         kappa = bmao.get_kappa_explore()
-        acq_line = boplt.plot_discounted_means(ax[0], kappa)
+        acq_line = boplt.plot_discounted_means(ax[0], kappa, xlabel=None)
         # Plot points
         scat = boplt.plot_data(ax[0], bool_color_cycled=True)
-        next = boplt.plot_next(ax[0], x_next, y_next)
+        next = boplt.plot_next(ax[0], x_next, y_next, markersize=800)
         legend = plt.legend([exp_fill, unexp_fill, std_fill, mean_line, acq_line, func_line, scat, next], 
                             ['Explained Deviation', 'Unexplained Deviation', 'Total Deviation', 'Estimated Mean Function', 'Acquisition Function', 'True Mean Function', 'Data', 'Next Test Location'], 
                             loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, fancybox=True, shadow=False, scatterpoints=1)
@@ -107,10 +111,10 @@ def plot(bmao, X, k_fig, x_next, y_next):
         legend.legendHandles[6]._sizes = [30]
         # Legend size for next point
         legend.legendHandles[7]._sizes = [30]
-    else:
+    elif bmao.get_prev_phase() == "low_density":
         # Plot points
-        scat = boplt.plot_data(ax[0], bool_color_cycled=True)
-        next = boplt.plot_next(ax[1], x_next, y_next)
+        scat = boplt.plot_data(ax[0], bool_color_cycled=True, xlabel=None)
+        next = boplt.plot_next(ax[1], x_next, y_next, markersize=800)
 
         # Low density, so plot on ax1
         plt.sca(ax[0])
@@ -127,13 +131,50 @@ def plot(bmao, X, k_fig, x_next, y_next):
         legend.legendHandles[0]._sizes = [30]
         plt.setp(legend.get_texts(), fontsize=8)        
 
+    elif bmao.get_prev_phase() == "low_KL":
+        boplt.plot_KL(ax[2], bool_bayesian=True, color='m', linestyle='--', upper=upper_KL)
+
+        # Plot points
+        scat = boplt.plot_data(ax[0], bool_color_cycled=True, xlabel=None)
+        next = boplt.plot_next(ax[2], x_next, y_next, markersize=800)
+
+        # Low density, so plot on ax2
+        plt.sca(ax[0])
+        legend = plt.legend([exp_fill, unexp_fill, std_fill, mean_line, func_line, scat], 
+                            ['Explained Deviation', 'Unexplained Deviation', 'Total Deviation', 'Estimated Mean Function', 'True Mean Function', 'Data'], 
+                            loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=2, fancybox=True, shadow=False, scatterpoints=1)
+        plt.setp(legend.get_texts(), fontsize=8)
+        legend.legendHandles[5]._sizes = [30]
+
+        # Set the axis for the second one
+        plt.sca(ax[2])
+        legend = plt.legend([next], ['Next Test Location'],
+                            loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=1, fancybox=True, shadow=False, scatterpoints=1)
+        legend.legendHandles[0]._sizes = [30]
+        plt.setp(legend.get_texts(), fontsize=8)        
+
+    # Remove y tick labels
+    ax[0].yaxis.set_ticklabels([])
+    # REmove x tick labels
+    ax[0].xaxis.set_ticklabels([])
+    ax[1].xaxis.set_ticklabels([])
+    ax[2].xaxis.set_ticklabels([])
+
+    # Set number of ticks
+    ax[2].locator_params(nbins = 3, axis='y')
+
     plt.savefig("FullyBayesianBMAO1D_figures/"+str(k_fig)+"_c_predictive_.png", dpi=dpi)
     plt.close(fig)
 
+
+constr1 = lambda x: x+3
+constr2 = lambda x: -x+3
+
 bmao = bo.optimizer.QuadraticBMAOptimizer(ndim = 1, 
                                           init_kernel_range=1.0, 
-                                          n_int=50,
-                                          precision_beta = 1000.0,
+                                          n_int=100,
+                                          precision_beta = 100.0,
+                                          constraints = [constr1, constr2],
                                           kernel_type='Gaussian')
 
 """

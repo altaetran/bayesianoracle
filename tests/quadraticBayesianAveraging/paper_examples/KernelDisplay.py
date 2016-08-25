@@ -27,34 +27,35 @@ def plot_kernels(bmao, X, x0, kernel_ranges, colors):
     boplt.set_bma(bmao.bma)
 
     ### Plot the data and the models
-    fig, ax = plt.subplots()
+    fig = plt.figure(figsize=(8, 6), dpi=dpi)
+    ax = plt.gca()
 
     legend_elements = []
     legend_texts = []
     
     for i in xrange(len(kernel_ranges)):
         # Plot the kernels
-        kernel_line = boplt.plot_kernel(ax, x0, kernel_ranges[i], color=colors[i], ylabel='data relevance')
+        kernel_line = boplt.plot_kernel(ax, x0, kernel_ranges[i], color=colors[i], ylabel=r'$k_{\gamma}\left(x,x^\prime\right)$')
 
         # Plot data 
-        data_scat = boplt.plot_kernel_at_data(ax, x0, kernel_ranges[i], color=colors[i], bool_color_cycled=True, xlabel=r'$x^\prime$')
+        data_scat = boplt.plot_kernel_at_data(ax, x0, kernel_ranges[i], color=colors[i], bool_color_cycled=True, xlabel=r'$x$')
         
         """
         # Add the information for legends
         legend_elements.append(kernel_line)
-        legend_texts.append(r"$K_\theta(x)$ for $\theta = "+str(kernel_ranges[i])+"$")
+        legend_texts.append(r"$K_\gamma(x)$ for $\gamma = "+str(kernel_ranges[i])+"$")
 
         # Get the data element in the legend
         legend_elements.append(data_scat)
         legend_texts.append(r"$K_\theta(x_i)$ for $\theta = "+str(kernel_ranges[i])+"$")
         """
         legend_elements.append((kernel_line, data_scat))
-        legend_texts.append(r"$\theta = " + str(kernel_ranges[i])+"$")
+        legend_texts.append(r"$\gamma = " + str(kernel_ranges[i])+'$')
 
     #boplt.plot_data_locations(ax, color='black', alpha=0.3, linestyle='--', zorder=1)
 
     # Create the x0 line
-    boplt.draw_vertical_line(ax, x0, r'$x='+str(x0[0])+'$', color='#FF9900')
+    boplt.draw_vertical_line(ax, x0, r'$x^\prime$', color='#FF9900')
 
     # Reverse the legend texts and elements
     legend_elements = reversed(legend_elements)
@@ -64,6 +65,7 @@ def plot_kernels(bmao, X, x0, kernel_ranges, colors):
     legend = plt.legend(legend_elements, 
                         legend_texts,
                         loc='center right', bbox_to_anchor=(1.05, 0.5), ncol=1, fancybox=True, shadow=False, scatterpoints=1)
+
 
     # Change the sizes of the scatter dots in legend
     """

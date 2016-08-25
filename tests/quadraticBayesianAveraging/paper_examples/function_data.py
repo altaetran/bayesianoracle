@@ -42,7 +42,7 @@ y_range = [-150.0, 150.0]
 num_points = 200
 
 # Resolution of saved images
-dpi=300
+dpi = 600
 
 ub = 3.0
 lb = -3.0
